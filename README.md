@@ -1,12 +1,12 @@
 <div align="center">
   <img width="700" src="assets/banner.svg" alt="Local MIDI Studio">
 
-An offline synthesizer, sampler and multitrack recorder for Windows.<br>
+An offline synthesizer, sampler and multitrack recorder with audio editing, for Windows.<br>
 Plug in any USB-MIDI keyboard, put on headphones and play: no accounts, no cloud, no network.
 
 <img alt="License GPL-3.0" src="https://img.shields.io/badge/license-GPL--3.0-f0a030?style=for-the-badge">
 <img alt="Windows" src="https://img.shields.io/badge/platform-Windows-3fa7d6?style=for-the-badge&logo=windows">
-<img alt="C++17" src="https://img.shields.io/badge/C%2B%2B-17-5ec27a?style=for-the-badge&logo=cplusplus">
+<img alt="C++20" src="https://img.shields.io/badge/C%2B%2B-20-5ec27a?style=for-the-badge&logo=cplusplus">
 <img alt="JUCE 7" src="https://img.shields.io/badge/JUCE-7.0.12-b07ee8?style=for-the-badge">
 
 ---
@@ -18,11 +18,12 @@ Plug in any USB-MIDI keyboard, put on headphones and play: no accounts, no cloud
 ## 🌃 Features
 
 - 🎹 **Plug and play MIDI**: keyboards are detected and enabled on hot-plug; notes, velocity, pitch bend, mod wheel and sustain pedal.
-- 🔊 **32-voice synth**: band-limited saw / square / pulse / triangle, sine, noise; ADSR, resonant LP/HP/BP filter, LFO (vibrato, wah, tremolo, PWM).
+- 🔊 **32-voice synth**: band-limited saw / square / pulse / triangle, sine, noise, a second detunable oscillator; ADSR, resonant LP/HP/BP filter, LFO (vibrato, wah, tremolo, PWM).
 - 🎻 **Sampler**: opens `.sfz` libraries and single audio files; a built-in library menu downloads free CC0 instruments.
-- 🥁 **Drum pads**: 16 on-screen pads that learn your hardware pads and always play the drum kit.
-- 🎚️ **Effects**: chorus, delay, reverb, with presets and MIDI Learn on every knob.
-- 🎼 **Song mode**: up to 8 tracks, count-in and metronome, mute/solo, save/open songs, autosave after every take.
+- 🥁 **Drum pads and step sequencer**: 16 on-screen pads that learn your hardware pads, and a 16-step grid to build beats.
+- 🎚️ **Mixer and effects**: per-track volume, pan, chorus, delay and reverb, a master volume; presets and MIDI Learn on every knob.
+- 🎼 **Song mode**: up to 8 tracks, count-in and metronome, loop recording with overdub, piano roll with quantize, 50-level undo/redo, mute/solo, save/open songs.
+- 🎤 **Voice and audio files**: record your microphone into a track, or drag WAV/MP3/FLAC/Ogg files onto the timeline; move, trim, split and duplicate them, zoomed in with Ctrl+wheel.
 - 📂 **MIDI files**: open any `.mid` (channel 10 → drums), export the mix to 24-bit WAV.
 - 🎓 **Genre sketches**: a script writes house, hip hop, rock, bossa nova and reggae loops on separate tracks, to hear how each genre is built.
 - ⚡ **Real-time safe**: lock-free MIDI path, no allocation in the audio callback, a 30-minute stress test.
@@ -31,7 +32,7 @@ Plug in any USB-MIDI keyboard, put on headphones and play: no accounts, no cloud
 
 ### ⬇️ Download
 
-Grab `LocalMIDIStudio-<version>-win64.exe` from the [Releases](../../releases/latest) page (Windows 10/11, 64-bit), or build it from source (below). It is a single file that needs only Windows system DLLs: copy it anywhere and run it.
+Grab `LocalMIDIStudio-<version>-win64.exe` from the [Releases](../../releases/latest) page (Windows 10/11, 64-bit), or build it from source (below). It is a single file that needs only Windows system DLLs: copy it anywhere and run it. The latest release may be older than this page: build from source for everything described here.
 
 ## 🚀 Getting started
 
@@ -56,21 +57,28 @@ Grab `LocalMIDIStudio-<version>-win64.exe` from the [Releases](../../releases/la
 <summary><h3 style="display: inline;">🎼 Song mode and MIDI files [click to expand]</h3></summary>
 <hr/>
 
-- Track 1 = Keys, track 2 = Drums; **+ Track** adds more (up to 8). Click a track to select it: keys, knobs, presets and *Keys play* act on it.
-- **Rec** records the selected track after a one-bar count-in while the others play; **Stop** keeps the take. **Play** plays the song; **M** / **S** = mute / solo.
-- **Save song** / **Open song**: `.lmsong` files in `Documents\LocalMIDIStudio\Songs` (tempo, click, every track's sound, instrument, mute/solo and notes). Every take is also saved to `Songs\autosave.lmsong`.
+- **Tracks**: track 1 = Keys, track 2 = Drums; **+ Track** adds more (up to 8). Click a track to select it: keys, knobs, presets and *Keys play* act on it. Right-click a track's name to delete it (tracks 3 and up) or clear it. **M** / **S** = mute / solo.
+- **Rec** records the selected track after a one-bar count-in while the others play; **Stop** keeps the take. **Play** plays the song. **Space bar** = Play / Stop (also stops a recording).
+- **Loop**: tick it, pick the bars, press Rec: the bars repeat and every pass you play is added on top of the previous ones (you hear them while you play). Stop keeps it all in the track.
+- **Edit notes**: piano roll of the selected track: click to add, drag to move or stretch, right-click to delete. **Quantize** snaps it to 1/16, **Undo** / **Redo** go back and forth through the last 50 changes (takes too).
 - **Steps** (DRUMS panel): a 16-step grid, one row per pad sound; click squares to build a one-bar beat, set how many bars it repeats, press Play.
 - **Mixing**: *Volume* and *Pan* (Output knobs) belong to the selected track; *Master* (top bar) sets the level of all tracks, the exported song included. All three are saved in the song.
-- **Edit notes** (SONG panel): piano roll of the selected track - click to add, drag to move or stretch, right-click to delete. **Quantize** snaps it to 1/16, **Undo** / **Redo** go back and forth through the last 50 changes (takes too).
-- **Voice** (red *Rec voice* button in the SONG panel): select a track, press *Rec voice* and sing after the count-in; press it again (or Stop) to finish. The first time it opens *Audio settings*: pick your microphone under *Input* (the status bar then shows `mic: ...`). The voice goes through that track's Volume, Pan and effects; *Save song* stores it as a WAV in the `Audio` folder next to the song, and every take is also kept in `Songs\Audio\voice-<date>.wav`.
-- **Space bar**: Play / Stop (also stops a recording).
-- **Audio files**: drag WAV, MP3, FLAC, Ogg or AIFF files from Explorer onto a track in the SONG panel; each plays from where you drop it (below the last track: a new track). Drag a region to move it (Shift: snap to 1/16), drag its edges to cut the start or the end. Right-click a region: *Split here*, *Duplicate* (Ctrl+D), *Delete* (Del), *Untrim*. Regions go through the track's Volume, Pan and effects, and are in Export song.
-- **Zoom**: Ctrl+wheel over the SONG panel zooms in and out around the mouse, the wheel scrolls in time, double-click on empty space shows the whole song.
-- **Tracks**: right-click a track's name to delete it (tracks 3 and up) or clear it.
-- **Loop** (SONG panel): tick it, pick the bars, press Rec: the bars repeat and every pass you play is added on top of the previous ones (you hear them while you play). Stop keeps it all in the track.
+- **Save song** / **Open song**: `.lmsong` files in `Documents\LocalMIDIStudio\Songs` (tempo, click, every track's sound, instrument, mute/solo, notes and audio). Every take is also saved to `Songs\autosave.lmsong`.
 - **Export song** writes the audible tracks to a 48 kHz / 24-bit WAV (metronome not included).
 - **Open MIDI...**: channel 10 → Drums, every other file track → its own track, file tempo → BPM.
 - **Genre sketches**: `python tools/genres.py` writes 8-bar loops to `Documents\LocalMIDIStudio\Genres`. Open one, give each track a sound, Play, then mute/solo to hear each ingredient. The patterns are plain text at the top of the script.
+</details>
+
+<details>
+<summary><h3 style="display: inline;">🎤 Voice and audio files [click to expand]</h3></summary>
+<hr/>
+
+- **Rec voice** (red button in the SONG panel): select a track, press it and sing after the count-in; press it again (or Stop) to finish. The first time it opens *Audio settings*: pick your microphone under *Input* (the status bar then shows `mic: ...`).
+- **Audio files**: drag WAV, MP3, FLAC, Ogg or AIFF files from Explorer onto a track; each plays from where you drop it (below the last track: a new track). A track holds several files.
+- **Editing**: drag a region to move it (Shift: snap to 1/16), drag its edges to cut the start or the end. Right-click a region: *Split here*, *Duplicate* (Ctrl+D), *Delete* (Del), *Untrim*. Cuts get a 5 ms fade, so they don't click.
+- **Zoom**: Ctrl+wheel over the SONG panel zooms around the mouse, the wheel scrolls in time, double-click on empty space shows the whole song. The ruler numbers the bars.
+- Voices and files go through the track's Volume, Pan and effects, and are in Export song. *Save song* keeps them as WAVs in the `Audio` folder next to the song; every voice take is also kept in `Songs\Audio\voice-<date>.wav`.
+- Audio edits are not in Undo (the original files stay on disk). Up to 32 regions and 30 minutes of audio per track.
 </details>
 
 <details>
