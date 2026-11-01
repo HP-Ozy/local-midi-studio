@@ -31,7 +31,7 @@ Plug in any USB-MIDI keyboard, put on headphones and play: no accounts, no cloud
 
 ### ⬇️ Download
 
-Build it from source (below). The result is a single `Local MIDI Studio.exe` that needs only Windows system DLLs: copy it anywhere and run it.
+Grab `LocalMIDIStudio-<version>-win64.exe` from the [Releases](../../releases/latest) page (Windows 10/11, 64-bit), or build it from source (below). It is a single file that needs only Windows system DLLs: copy it anywhere and run it.
 
 ## 🚀 Getting started
 
