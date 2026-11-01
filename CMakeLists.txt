@@ -11,14 +11,14 @@ add_subdirectory(JUCE)
 
 juce_add_gui_app(LocalMIDIStudio PRODUCT_NAME "Local MIDI Studio")
 target_sources(LocalMIDIStudio PRIVATE src/Main.cpp)
-target_compile_definitions(LocalMIDIStudio PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+target_compile_definitions(LocalMIDIStudio PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_USE_MP3AUDIOFORMAT=1) # drop downloaded .mp3 files
 target_link_libraries(LocalMIDIStudio PRIVATE juce::juce_audio_utils juce::juce_dsp
     PUBLIC juce::juce_recommended_config_flags)
 
 juce_add_console_app(RenderTest)
 target_sources(RenderTest PRIVATE tests/RenderTest.cpp)
 target_include_directories(RenderTest PRIVATE src)
-target_compile_definitions(RenderTest PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+target_compile_definitions(RenderTest PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_USE_MP3AUDIOFORMAT=1)
 target_link_libraries(RenderTest PRIVATE juce::juce_audio_devices juce::juce_audio_formats juce::juce_dsp
     PUBLIC juce::juce_recommended_config_flags)
 

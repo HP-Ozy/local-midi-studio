@@ -2,15 +2,21 @@
 #include "Song.h"
 #include "Presets.h"
 
-// Song file (.lmsong): {"format":"LocalMIDIStudio.song","version":1,"bpm","metronome","selected",
-//   "tracks":[{"sound":<preset JSON>,"instrument":"<.sfz path or empty>","mute","solo","events":[[seconds,b0,b1,b2],...]}]}.
+// Song file (.lmsong): {"format":"LocalMIDIStudio.song","version":1,"bpm","metronome","master","selected",
+//   "tracks":[{"sound":<preset JSON>,"instrument":"<.sfz path or empty>","mute","solo","events":[[seconds,b0,b1,b2],...],
+//   "audio":"<song name>-trackN.wav" (recorded voice or dropped file, in the Audio folder next to the song; optional),
+//   "regions":[[start,in,out,lo,hi],...] seconds: where each part sounds in the song, the part of the WAV heard, and
+//   the extent of its original file in the WAV (-1 = the end). Songs from before regions: "audioStart","audioIn","audioOut"}]}.
 // Files may be hand-edited: loading validates everything into a separate copy first, so a bad file never leaves a
 // half-loaded song.
 namespace SongFile
 {
 constexpr int version = 1;
 
-inline juce::String toJson (Song& song, const std::array<juce::File, Song::maxTracks>& instruments)
+// audioStem: the song file's name without extension; tracks with a voice then refer to "<audioStem>-trackN.wav".
+inline juce::String audioName (const juce::String& audioStem, int track) { return audioStem + "-track" + juce::String (track + 1) + ".wav"; }
+
+inline juce::String toJson (Song& song, const std::array<juce::File, Song::maxTracks>& instruments, bool notes = true, const juce::String& audioStem = {})
 {
     juce::Array<juce::var> tracks;
     for (int i = 0; i < song.count; ++i)
@@ -19,6 +25,7 @@ inline juce::String toJson (Song& song, const std::array<juce::File, Song::maxTr
         juce::Array<juce::var> events;
         for (auto* e : t.clip)
         {
+            if (! notes) break;
             const auto& m = e->message;
             if (m.getRawDataSize() > 3 || m.isMetaEvent()) continue;
             juce::Array<juce::var> ev { m.getTimeStamp() };
@@ -31,6 +38,17 @@ inline juce::String toJson (Song& song, const std::array<juce::File, Song::maxTr
         o->setProperty ("mute", t.mute.load());
         o->setProperty ("solo", t.solo.load());
         o->setProperty ("events", events);
+        if (notes && audioStem.isNotEmpty() && ! t.audio.empty())
+        {
+            o->setProperty ("audio", audioName (audioStem, i));
+            juce::Array<juce::var> regions;
+            for (int k = 0; k < t.audio.count; ++k)
+            {
+                const auto& r = t.audio.regions[(size_t) k];
+                regions.add (juce::Array<juce::var> { (double) r.start.load() / song.rate, r.in.load() / song.rate, r.out.load() / song.rate, r.lo / song.rate, r.hi / song.rate });
+            }
+            o->setProperty ("regions", regions);
+        }
         tracks.add (juce::var (o));
     }
     auto* root = new juce::DynamicObject();
@@ -38,6 +56,7 @@ inline juce::String toJson (Song& song, const std::array<juce::File, Song::maxTr
     root->setProperty ("version", version);
     root->setProperty ("bpm", song.bpm.load());
     root->setProperty ("metronome", song.metronome.load());
+    root->setProperty ("master", song.master.load());
     root->setProperty ("selected", song.selected.load());
     root->setProperty ("tracks", tracks);
     return juce::JSON::toString (juce::var (root));
@@ -45,10 +64,11 @@ inline juce::String toJson (Song& song, const std::array<juce::File, Song::maxTr
 
 struct Loaded // a fully validated song, applied by the caller while the transport is stopped
 {
-    struct Track { SynthParams params; juce::MidiMessageSequence clip; juce::String instrument; bool mute = false, solo = false; };
+    struct Track { SynthParams params; juce::MidiMessageSequence clip; juce::String instrument, audio; std::vector<std::array<double, 5>> regions; bool mute = false, solo = false; };
     std::vector<std::unique_ptr<Track>> tracks;
     double bpm = 120.0;
     bool metronome = true;
+    float master = 1.0f;
     int selected = 0;
 };
 
@@ -64,6 +84,7 @@ inline juce::String parse (const juce::String& text, Loaded& out)
     if (tracks->size() > Song::maxTracks) return "the song has " + juce::String (tracks->size()) + " tracks (max " + juce::String (Song::maxTracks) + ")";
     out.bpm = juce::jlimit (30.0, 300.0, root.getProperty ("bpm", 120.0).operator double());
     out.metronome = root.getProperty ("metronome", true);
+    out.master = juce::jlimit (0.0f, 1.0f, (float) root.getProperty ("master", 1.0).operator double()); // older songs: full
     out.selected = juce::jlimit (0, tracks->size() - 1, (int) root.getProperty ("selected", 0));
     for (int i = 0; i < tracks->size(); ++i)
     {
@@ -76,6 +97,25 @@ inline juce::String parse (const juce::String& text, Loaded& out)
         t->instrument = tv["instrument"].toString();
         t->mute = tv["mute"];
         t->solo = tv["solo"];
+        t->audio = tv["audio"].toString();
+        if (t->audio.isNotEmpty() && (juce::File::createLegalFileName (t->audio) != t->audio || ! t->audio.endsWithIgnoreCase (".wav")))
+            return "track " + juce::String (i + 1) + ": audio must be a .wav file name next to the song"; // no paths: a song can't point elsewhere
+        if (const auto* regions = tv["regions"].getArray())
+        {
+            if (regions->size() > AudioClip::maxRegions) return "track " + juce::String (i + 1) + ": more than " + juce::String (AudioClip::maxRegions) + " audio regions";
+            for (const auto& rv : *regions)
+            {
+                const auto* a = rv.getArray();
+                if (a == nullptr || a->size() != 5) return "track " + juce::String (i + 1) + ": malformed audio region";
+                t->regions.push_back ({ (*a)[0], (*a)[1], (*a)[2], (*a)[3], (*a)[4] });
+            }
+        }
+        else if (t->audio.isNotEmpty()) // older songs: one region, by default the whole file from 0 s
+            t->regions.push_back ({ tv.getProperty ("audioStart", 0.0), tv.getProperty ("audioIn", 0.0), tv.getProperty ("audioOut", -1.0), 0.0, -1.0 });
+        for (const auto& r : t->regions)
+            for (int k = 0; k < 5; ++k) // start, in, lo >= 0; out and hi may be -1 (the end)
+                if (! std::isfinite (r[(size_t) k]) || r[(size_t) k] > 24 * 3600.0 || r[(size_t) k] < ((k == 2 || k == 4) && r[(size_t) k] == -1.0 ? -1.0 : 0.0))
+                    return "track " + juce::String (i + 1) + ": invalid audio position";
         if (const auto* events = tv["events"].getArray())
             for (const auto& ev : *events)
             {

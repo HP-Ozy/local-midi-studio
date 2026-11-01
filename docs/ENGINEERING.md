@@ -210,3 +210,160 @@ Recording / WAV export (master prompt Phase 5) slots in after P0 and before P2 e
 - **Tests**: round trip of 3 tracks (note on/off, pitch bend, CC on channel 10, channel pressure; sounds; mute/solo; bpm; metronome; selected; an unloaded instrument saved as empty) — identical bytes and times; 8/8 bad files refused. 5/5 runs.
 - **Not verified**: the save/open dialogs and applying a loaded song in the running app (GUI clicks can't be automated in this session). Pad learning/assignments stay app settings (not per song).
 - **Next**: drum step sequencer, piano-roll editing + quantize, mixer, vocal (audio) tracks.
+
+### C23 — Drum step sequencer (01/11/2026)
+- **Model** (`src/Steps.h`): 16 rows (one per pad, playing the pad's kit sound) x 16 sixteenth steps of one bar, repeated over 1..64 bars, rendered into the drum track's clip (channel 10, velocity 100, half-step notes). No new file format: songs save the clip; the grid reads the clip's first bar back, rounded to the nearest step.
+- **App**: *Steps* toggle in the DRUMS panel swaps the pads for the grid + a bars box; the playing step is highlighted. A clip the grid did not write (recorded, opened song/MIDI) is never replaced silently: the first edit asks. Pattern clips follow BPM changes and pad sound changes; recorded tracks stay in seconds (not re-timed). Editing while playing stops and restarts the transport at the same position; editing while recording is refused.
+- **Tests**: 2-bar pattern -> 28 notes, kick of bar 2 at exactly 2.5 s, round trip identical, a take ±12 ms off reads as the same pattern, `same()` tells equal / jittered / different-length clips apart. All tests pass.
+- **Not verified**: the grid in the running app (posted clicks don't press JUCE buttons) — screenshot shows the Steps button only.
+
+### C24 — Piano-roll editing, quantize, undo (01/11/2026)
+- **Bug found first** (from C23): restarting the transport mid-song (an edit while playing) reset every track to event 0, so `addEventsInRange` fired every note already passed in the first block. Test: a note held across the resume point sounded at 0.113 RMS in the first 150 ms; `Song::render` now skips events before `startPos` on start → 0.0000. (Notes held across the resume point are not re-struck.)
+- **Model** (`src/Notes.h`): clip ↔ list of notes (start/end s, key, velocity, channel); writing keeps every non-note event (pedal, CC, pitch bend) and adds note-offs before note-ons, so back-to-back repeats of a key both sound (negative control: ons first → second note 0.000). Quantize: starts to the nearest 1/16, lengths to whole steps (≥ 1).
+- **App**: *Edit notes* swaps the track rows for a piano roll of the selected track (drum track: kit sound names on the keys, channel 10): click = add a 1/16 note (drag to lengthen), drag = move (snapped to 1/16), right edge = length, right-click = delete; wheel / Shift / Ctrl = pitch / time / zoom. *Quantize* = selected track. *Undo* = one level, covers takes, edits, quantize and the step grid (pressing it again redoes); cleared on Open song / Open MIDI. All clip changes go through `setClip` (stop, replace, resume at the same position).
+- **Tests**: round trip (2 notes, unreleased note gets 0.25 s, CC + pitch bend kept), repeated key, quantize, resume. All tests pass.
+- **Not verified**: the editor in the running app (screenshot shows the buttons only; posted clicks don't reach JUCE buttons). Velocity editing, multi-select, copy/paste not done.
+
+### C25 — Mixer: pan per track, master volume (01/11/2026)
+- **Already there**: per-track volume = each track's *Volume* knob (`gain`, smoothed since C10), saved in the song. Not duplicated in a separate mixer view.
+- **Pan** (`src/Synth.h`): `SynthParams::pan` −1…+1 in the `forEach` table, so presets, song files, MIDI Learn, WAV export and the stress test's random knob moves get it for free. Applied with Volume, before the track's safety clip, smoothed 20 ms. Balance law (the signal is already stereo because of the reverb): the far side fades linearly, the near side stays ×1, so **centre is bit-identical to before** (THD −166.5 dB, chord −143.4/−141.3 dB, unchanged). Old presets/songs without `pan` keep the track centred (missing keys keep their value).
+- **Master** (`src/Song.h`): `Song::master` 0…1 on the track sum + metronome, smoothed 20 ms, before the master safety clip; also applied in `mixdown` (Export song). Saved as `"master"` in `.lmsong` (clamped; missing = 1, so older songs open unchanged). GUI: *Pan* knob in OUTPUT (selected track), *Master* slider in the top bar.
+- **Tests** (`tests/RenderTest.cpp`): pan centre L = R, hard left L = centre L and R = 0, +0.5 → L **0.500** / R **1.000** of centre; master 0.5 → live **0.500**, mixdown **0.500**; click test on Pan 0→1 **0.97×** and 1→0 **1.00×** a clean sine; song file round trip keeps pan and master; a song without `master` opens at 1 and centred. **Negative control**: same build with the pan ramp set to 0 → Pan **inf×** (left drops to 0 in one sample) and **17.1×**, `clicks == 0` fails. 3/3 runs `ALL TESTS PASSED`.
+- **Cost**: CPU median 32 voices LFO off **13.0** ms/s (C15: 12.9), vibrato 16.9, filter 28.6, tremolo 14.2, PWM 17.1–17.8 — within noise. (A first baseline this session read 19.2 because the app was running at the same time.) Real device 2-minute stress: worst block **1.065 ms** of 10, 0 over budget, 0 bad samples, no leak.
+- **Not verified**: Pan knob / Master slider by hand and by ear (screenshot shows them; posted clicks don't press JUCE controls); pan is part of the track's sound like Volume, so loading a preset saved with a pan also moves the track. No master click test of its own (same `SmoothedValue` ramp as the tested pan/Volume). Not done: mixer strip view with all tracks at once, level meters per track, pan law choice.
+- **Next**: sound editor — oscillator tuning (semitones/cents), second oscillator + mix, waveform/envelope display.
+
+### C26 — Sound editor: tuning, second oscillator, shape view (01/11/2026)
+- **Tuning** (`src/Synth.h`): `tune` (−24…+24 semitones, whole steps in the GUI) and `fine` (±100 cents) for the whole voice, added to the pitch-bend semitones in `Voice::updatePitch`. `updatePitch` now also runs once per block (`updateParams`), so turning Tune on a held note acts within one block; the phase runs on, so the pitch changes without a waveform step (a pitch change is not a click and the step/peak metric can't judge it: a higher note has a steeper natural slope).
+- **Osc 2**: `osc2Wave` (same 6 waves), `osc2Tune` / `osc2Fine` relative to osc 1, `osc2Mix` 0…1 smoothed 20 ms per voice: out = osc1 + mix·(osc2 − osc1). Own phase and **own band-limited table** chosen from its own pitch (`table2`). At mix 0 osc 2 is not computed at all and osc 1 is **bit-identical** to before (THD −166.5 dB, chord −143.4/−141.3 dB, aliasing rows unchanged). Its phase waits while the mix is 0 (first version kept it running per sample — removed: the mix ramps in from 0, so a waiting phase can't click). Same LFO pitch, pulse width and filter as osc 1. All in `forEach`: presets, songs, MIDI Learn, WAV export and the stress test's random knob moves get them. Factory presets are written from a default `SynthParams`, so loading one resets tune/osc 2 (and pan); user presets saved before today keep the current tune/osc 2 values (missing keys keep their value).
+- **GUI** (`src/Main.cpp`): OSCILLATOR = Waveform + Tune + Fine + Width; new OSC 2 panel = wave + Tune 2 + Fine 2 + Mix; SHAPE panel (`ShapeView`): two cycles of osc 1 mixed with osc 2 (drawn with the engine's own `Voice::shape`, noise as random) and the ADSR outline (attack, decay, a hold, release in proportion). It repaints only when a parameter of the selected track changes (30 Hz check of the `forEach` values). Second row is now FILTER, LFO, EFFECTS, OUTPUT; knob labels squeeze (min scale 0.6) instead of being cut to "Delay ...".
+- **Tests** (`tests/RenderTest.cpp`): Tune +12 → **880.00 Hz**; −1 st +50 c → **427.47** (427.474); osc 2 alone +7 st → **659.26** (659.255); Tune moved on a held note **440.00 → 880.00 Hz**; mix 0 with osc 2 = noise +5 st → output **identical** to the plain saw; osc 2 saw +24 st on A6 (7040 Hz): fold-back at 12.8 kHz **−144.1 dBc**; Osc 2 mix 0→1 (to a sine an octave down) **0.95×** a clean sine. **Negative controls** (same build with the mix ramp at 0 and osc 2 on osc 1's table): click **5.53×** → `clicks == 0` fails; fold-back **−14.0 dBc** (predicted ≈ −14: the 5th harmonic at 1/5) → `alias < -90` fails. ALL TESTS PASSED.
+- **Cost**: the PC was busy this time (other apps), so absolute CPU figures drifted (LFO off 13.0 → 14–20 ms/s between runs). Interleaved A/B, same machine state, old single-oscillator loop vs new: LFO off **14.4/13.9/16.2 vs 19.7/14.5/16.0** ms, no consistent difference; new bench column *osc 2* (32 voices, detuned saw, mix 0.5) **18.3–21.4** ms/s, i.e. a second oscillator costs roughly +2–5 ms per second of audio (≤ 0.5 % of a core). Real device 2-minute stress: worst block **1.078 ms** of 10, 0 over budget, 0 bad samples, no leak.
+- **Not verified**: the new knobs and the shape view by hand and by ear (screenshot shows the panels at default values; posted clicks don't move JUCE controls). Not done: osc 2 hard sync / FM / ring mod, separate osc 2 level per voice, envelope view with real time axis, waveform view of sampler instruments.
+- **Next**: loop recording, multi-level undo/redo.
+
+### C27 — Multi-level undo/redo, loop recording (01/11/2026)
+- **Undo/redo** (`src/Notes.h` `History`, `src/Main.cpp`): replaces the single `undoClip`/`undoTrack`. Every `setClip` (takes, piano-roll edits, quantize, step grid, loop takes) pushes what the track had; *Undo* swaps it back and puts the replaced clip on the redo side, *Redo* the reverse; a new change clears redo; 50 steps (oldest dropped); cleared on Open song / Open MIDI as before. Undo no longer doubles as redo: it goes further back.
+- **Loop recording** (`src/Song.h`, `src/Main.cpp`): *Loop* + *bars* (1–16) in the SONG header. With Loop on, Rec still counts in one bar, then the transport cycles over the bars; the recording track **also plays its old clip** (overdub) and every pass is heard on the next ones. Design: the audio thread itself keeps what is played live for the recording track (keys if it is selected, pads if it is the drum track — same rule as normal takes) in a preallocated `loopTake` (8192 events, absolute sample position) and replays earlier passes from it — no allocation, no lock, sample-exact (the wall-clock `record()` path is skipped while looping). The wrap may fall inside a block: clip events are read as [pos, L) + [0, rest) with the right buffer offsets, the metronome wraps too, and clip notes still sounding at the loop end get a note-off at the wrap (live keys are not cut). At Stop the passes are folded into one loop length (`Notes::fold`: a note still sounding at the loop end is cut there) and **added** to the track's notes through `setClip` (undoable), then autosaved.
+- **Tests** (`tests/RenderTest.cpp`): history — 3 changes on 2 tracks undone newest first back to the originals, redo, new change clears redo, cap 50; fold — passes 0/1/2 land at 0.25/0.25/0.75 s, a note past the loop end ends at 2.00; engine — 0.5 s loop (wrap inside a 256-sample block), one live note in pass 0 → onsets **4901 / 28901 / 52901** (exactly 24000 samples apart), 2 events stored, silence between; a clip note 0.3–0.9 s is silent after the wrap (**0.000000**) and sounding before (0.104). **Negative controls** (same build without replaying earlier passes and without the wrap note-off): onsets 4901 / 62464 → fails; after the wrap **0.089** (hanging note) → fails. Full take scanned each block: first version **45.7 ms** for a 5.33 ms block (8192 events replayed at one instant: `MidiBuffer::addEvent` is O(n) per insert, and its capacity would have been exceeded = allocation on the audio thread) → replay capped at `MidiQueue::maxPerBlock` (256) per block → **0.085 ms**. ALL TESTS PASSED (3/3).
+- **Not verified**: Loop / bars / Redo by hand (screenshot shows them; posted clicks don't press JUCE buttons); with the real VI49 and pads. The 2-minute stress harness drives `SynthEngine`, not `Song`, so it doesn't exercise this; not run this cycle.
+- **Limits**: pedal, CC and pitch bend played in a loop take are not kept (notes only, `shortcut:` in `stopLoopTake`); more than 8192 events in one loop take are dropped (log says so); more than 256 replayed events in one block are dropped; the loop always starts at bar 1; no "replace" mode (loop takes always add).
+- **Next**: vocal (audio) tracks, single-WAV sample player, packaging.
+
+### C28 — Voice (audio) tracks (01/11/2026)
+- **What**: any track can hold a recorded voice (mono) next to its notes. *Voice* (SONG header) + Rec = record the microphone into the selected track after the usual one-bar count-in; the track's notes and the other tracks keep playing; Stop makes it the track's voice (replacing the old one). The voice plays through the track's engine (`SynthEngine::render` gained an optional mono input, mixed before effects), so Volume, Pan, the effects (reverb on a voice), mute/solo and the safety clip apply, live and in *Export song* (`renderOffline` takes the voice too). Track rows show "+ voice"; the status bar shows the active mic or "mic: none".
+- **Real time** (`src/Song.h`, `src/Main.cpp`): the input arrives in channel 0 of the callback buffer and is copied to a preallocated `micBuf` before the song overwrites it; the audio thread writes it at the song's own sample position into `voiceTake`, which the GUI allocates (10 min, ~115 MB) when Rec is pressed and frees at Stop — no allocation, lock or file I/O in the callback, and no wall-clock alignment needed (the audio thread knows the position). Playback copies the block of each track's voice into a preallocated per-track buffer (handles the loop wrap too). Nothing is recorded during the count-in. A track being voice-recorded doesn't play its old voice.
+- **Latency**: at Stop the take is moved earlier by `2 × buffer + input latency + output latency` as reported by the driver (what you heard was output that late, and the mic arrives that late). **Not measured** — needs a loopback check (play a click, record it back, compare); WASAPI shared may misreport.
+- **Files**: `Save song` writes each voice as `<song name>-trackN.wav` (mono 24-bit) next to the `.lmsong`, which refers to it by file name only; loading validates the name (a plain `.wav` file name, no path — a song can't point elsewhere) and converts other sample rates (Lagrange). Every voice take is also written to `Songs\voice-YYYYMMDD-HHMMSS.wav` before it replaces anything, so a replaced voice is never lost (voice takes aren't in Undo). Autosave after a voice take writes `autosave-trackN.wav` too.
+- **Settings**: the audio device selector now offers 0–1 input channel and the app asks for 1 input; with the saved settings of this PC the input is still none until the user picks a microphone in *Audio settings*.
+- **Tests** (`tests/RenderTest.cpp`): voice silent before its tone (0.00000), tone at 0.212 RMS, Volume 0.3 → ratio **0.500**, mute → 0, song length = voice length; mic capture after a 12 000-sample count-in → **36 128** samples written, every one at its exact song sample, old voice silent while recording; mixdown includes the voice (peak 0.300); song file round trip names `my song-track1.wav`; `..\x.wav`, `C:/x.wav`, `sub/x.wav`, `x.exe` refused (4/4). **Negative controls** (same build with the take written one sample late, the old voice playing during a take, the name check off): aligned 0 and 0.212 → fail; 0/4 refused → fail. ALL TESTS PASSED.
+- **Not verified**: a real voice take (choosing the input, singing, hearing it back) — needs the user's microphone, not recorded without asking; latency compensation (see above); input and output on two different devices under WASAPI shared (JUCE supports it; not tried here). No input monitoring (you don't hear yourself through the app; use the headset's or Windows' monitoring).
+- **Limits**: one voice per track, mono, from song 0 s; no editing, trimming or moving of voices; voices aren't part of Undo (but each take is kept as a file); a voice is assumed to be at the current device rate during playback (converted on load only); Open MIDI keeps existing voices; voice takes refuse Loop.
+- **Next**: single-WAV sample player, violin/guitar for the Library (needs the user's OK for downloads), packaging, latency.
+
+**C28 follow-up (UI):** the *Voice* tick box was hard to find, so it is now a red **Rec voice** button in the SONG header. One click records the mic, the second click stops. With no microphone it opens Audio settings. No engine change; tests still pass (ALL TESTS PASSED). The click itself is not checked: posted clicks do not reach JUCE buttons.
+
+## C29 — Audio files on the timeline (drop, move, trim)
+
+**Asked for:** drag a downloaded audio file onto the song at a chosen position, then edit it.
+
+**What changed:**
+- `AudioClip` (Recording.h) replaces the mono voice buffer on each track. It holds:
+  - the buffer, mono or stereo, at the song rate;
+  - `start` (song sample) and the part heard, `in`/`out`. These are atomics, so dragging works while playing;
+  - a fixed 5 ms fade at both cuts;
+  - a peak overview for drawing.
+- `addTo` is the one reader, shared by the live render (including the loop wrap), the offline mixdown and the export.
+- `SynthEngine::render`'s `in` is now an AudioBuffer: stereo audio stays stereo through effects, Volume and Pan.
+- `readAudioFile`: WAV/MP3/FLAC/Ogg/AIFF, first 2 channels, Lagrange resampling to the song rate, 10 min cap. MP3 needs `JUCE_USE_MP3AUDIOFORMAT=1`.
+- SongView:
+  - a file can be dropped on a track, or below the last track for a new one;
+  - drag the body to move it (Shift snaps to 1/16);
+  - drag an edge to trim it non-destructively (a left trim keeps the rest in place);
+  - right-click for *Delete audio* or *Untrim*;
+  - the waveform is drawn.
+- Song file: `audioStart`/`audioIn`/`audioOut` in seconds, validated (finite, ≥ 0, ≤ 24 h). The whole file is saved in `Audio\`, so a trim can still be undone after reopening.
+- Open MIDI now also clears the tracks' audio. Before, an old voice survived.
+
+**Measured:**
+- AudioClip placement is sample-exact; silent outside the region; stereo kept; `end()` is right.
+- Worst step at the two cuts (both near a sine peak) is 1.00× a clean sine. Without the fade it is 17.36×.
+- The loop wrap reads from the start again.
+- Cost: 0.004 ms per 256-sample block for 8 stereo tracks (budget 5.33 ms).
+- A 44.1 kHz stereo WAV is read at 48 kHz: 48000 samples, 220/220 cycles, stereo kept.
+- A real MP3 made with ffmpeg decoded: 2 ch, 3.03 s. This is an optional check with `LMS_MP3=<file>`.
+- A region moved by 0.25 s plays 0.25 s later; song length follows.
+- Song file round trip is exact; 3/3 bad positions refused.
+- Stress (SynthEngine) ran 3 min: worst block 1.0 of 10 ms, 0 over budget.
+
+**Negative controls, each failed and was then restored:**
+- no fade (17.36×);
+- `in` ignored when placing (placed 0);
+- loop wrap ignored;
+- position validation removed (0/3);
+- no resampling (44100 samples, 240 cycles).
+
+**Not verified:**
+- drag & drop from Explorer and the mouse edits: posted input doesn't reach JUCE, so the user tries it;
+- waveform drawing with a real file;
+- a 10-minute MP3 (loading happens on the GUI thread and may freeze the window for a moment).
+
+**Limits:**
+- one audio region per track, so for more audio use more tracks (8 max);
+- dropping on a track replaces its audio;
+- audio edits aren't in Undo, but the original file stays on disk;
+- no time-stretch or pitch-shift, no per-clip gain or fades beyond the 5 ms; the track's Volume, Pan and effects apply;
+- the song file assumes the audio is at the current rate (resampled on load).
+
+**Next:** the remaining list (sample player, Library violin/guitar with the user's OK for downloads, packaging, latency).
+
+**C29 follow-up (UI):** Space = Play / Stop (also stops a recording), handled by `MainComponent::keyPressed`; the piano passes on the keys it does not use. The piano now takes the keyboard focus back whenever nothing has it (after a dialog), instead of only once at start. Not checked: a posted WM_KEYDOWN does not reach JUCE, so the user tries it.
+
+## C30 — Audio regions (split, duplicate, delete), zoom, delete track
+
+**Asked for:**
+- Ctrl+wheel to zoom in on a track and edit where audio starts and ends;
+- cut and duplicate audio, plus other useful edits;
+- delete tracks.
+
+**What changed:**
+- `AudioClip` is now a pool plus regions:
+  - every file dropped on (or recorded into) a track is appended to one buffer;
+  - up to 32 regions (start/in/out atomics, lo/hi = their file's extent) play parts of that buffer;
+  - split and duplicate share samples, so nothing is copied;
+  - dropping a second file on a track adds it instead of replacing, and a voice take is added too.
+- Fades are 5 ms only at real cuts. `refreshFades` turns them off where another region continues seamlessly, so a split sounds identical to the unsplit region.
+- Structural edits (add/split/duplicate/delete) run in `whileStopped`, which resumes from the same place.
+- SongView:
+  - a bar ruler (beats when there is room);
+  - Ctrl+wheel zooms around the mouse; the wheel scrolls in time; double-click on empty space fits the song;
+  - the playhead stays in view;
+  - the selected region gets a white outline;
+  - right-click on a region offers Split here, Duplicate (Ctrl+D), Delete (Del), Untrim;
+  - right-click on a track name offers Delete track (tracks 3+) and Clear track (undoable notes, audio gone).
+- `Song::removeTrack` rotates the tracks up and resets the freed one. Main holds `getAudioCallbackLock()` around it, because the live keys render even while stopped. Undo history is cleared, since it names tracks by number.
+- Song file: `"regions":[[start,in,out,lo,hi],...]` in seconds. The old audioStart/In/Out still loads as one region. Validated: 5 finite numbers, ≥ 0 (out/hi may be −1 = the end), ≤ 24 h, ≤ 32 regions.
+
+**Measured:**
+- A split plays bit-identical to the unsplit region.
+- Split at or outside an edge does nothing.
+- A duplicate placed right after plays the same samples.
+- Delete silences the region; the audio is kept once (48000 samples).
+- A second mono file on a stereo track goes into both channels at its place.
+- Song file: 2 regions round trip; old format gives 1 region; 6/6 bad positions refused.
+- Delete track: the later tracks move up and the freed one is reset.
+- Cost unchanged: 0.003 ms per block for 8 stereo tracks.
+
+**Negative controls, each failed and was then restored:**
+- fades also at the split joint (split ≠ unsplit);
+- freed track not cleared (clean 0).
+
+**Not verified:**
+- every mouse/wheel/keyboard gesture: posted input doesn't reach JUCE, so the user tries it;
+- holding the audio callback lock during Delete track: briefly blocks the audio thread, not measured.
+
+**Limits:**
+- audio edits aren't in Undo;
+- a track's files together are capped at 30 min in memory;
+- deleting regions doesn't free their samples until the song is reopened (the saved WAV holds the whole pool);
+- tracks 1 and 2 can't be deleted (keys and the drums the pads play), only cleared.

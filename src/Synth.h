@@ -15,6 +15,10 @@ struct SynthParams
     std::atomic<float> modWheel { 0.0f }; // CC1 / 127, written by the audio thread from incoming MIDI; adds to lfoDepth
     std::atomic<float> chorusMix { 0.0f }, delayMix { 0.0f }, delayTime { 0.35f }, delayFeedback { 0.35f },
                        reverbMix { 0.0f }, reverbSize { 0.5f }; // effects: a mix of 0 switches the effect off
+    std::atomic<float> pan { 0.0f };   // -1 left .. +1 right (balance: the far side fades, centre = x1 on both)
+    std::atomic<float> tune { 0.0f }, fine { 0.0f };          // whole voice: semitones, cents
+    std::atomic<int> osc2Wave { 1 };                           // second oscillator, same waves as `wave`
+    std::atomic<float> osc2Tune { 0.0f }, osc2Fine { 0.0f }, osc2Mix { 0.0f }; // relative to osc 1; mix 0 = osc 1 only
 
     // Built from forEach, so a new parameter can't be forgotten (the WAV export copies the sound with this).
     void copyFrom (const SynthParams& o)
@@ -35,10 +39,13 @@ struct SynthParams
         f ("release", release, 0.001f, 8.0f);
         f ("cutoff", cutoff, 20.0f, 20000.0f); f ("resonance", resonance, 0.5f, 10.0f);
         f ("lfoRate", lfoRate, 0.1f, 20.0f);   f ("lfoDepth", lfoDepth, 0.0f, 1.0f); f ("pulseWidth", pulseWidth, 0.05f, 0.95f);
-        f ("gain", gain, 0.0f, 1.0f);
+        f ("gain", gain, 0.0f, 1.0f);      f ("pan", pan, -1.0f, 1.0f);
         f ("chorusMix", chorusMix, 0.0f, 1.0f);
         f ("delayMix", delayMix, 0.0f, 1.0f); f ("delayTime", delayTime, 0.02f, 1.5f); f ("delayFeedback", delayFeedback, 0.0f, 0.9f);
         f ("reverbMix", reverbMix, 0.0f, 1.0f); f ("reverbSize", reverbSize, 0.0f, 1.0f);
+        f ("tune", tune, -24.0f, 24.0f);      f ("fine", fine, -100.0f, 100.0f);
+        f ("osc2Wave", osc2Wave, 0, 5);       f ("osc2Tune", osc2Tune, -24.0f, 24.0f); f ("osc2Fine", osc2Fine, -100.0f, 100.0f);
+        f ("osc2Mix", osc2Mix, 0.0f, 1.0f);
     }
 };
 
@@ -172,6 +179,7 @@ public:
         lfoDepthSmoothed.reset (sr, 0.02);
         resonanceSmoothed.reset (sr, 0.02);
         widthSmoothed.reset (sr, 0.02);
+        mix2Smoothed.reset (sr, 0.02);
         residualDecay = (float) std::exp (-1.0 / (0.002 * sr)); // 2 ms time constant
     }
 
@@ -180,12 +188,13 @@ public:
         level = velocity * 0.3f; // headroom for many voices before the master soft-clip
         bend = pitchWheel;
         updatePitch();
-        phase = 0.0;
+        phase = phase2 = 0.0;
         lfoPhase = 0.0; // LFO restarts with each note: reproducible renders
         filter.reset();
         cutoff.setCurrentAndTargetValue (targetCutoff());
         lfoDepthSmoothed.setCurrentAndTargetValue (lfoDepth());
         widthSmoothed.setCurrentAndTargetValue (params.pulseWidth);
+        mix2Smoothed.setCurrentAndTargetValue (params.osc2Mix);
         resonanceSmoothed.setCurrentAndTargetValue (params.resonance);
         filter.setResonance (params.resonance);
         updateParams();
@@ -217,7 +226,7 @@ public:
         bool active = isVoiceActive();
         if (! active && residual == 0.0f) return;
         if (active) updateParams();
-        const int w = params.wave.load();
+        const int w = params.wave.load(), w2 = params.osc2Wave.load();
         for (int i = 0; i < num; ++i)
         {
             float s = 0.0f;
@@ -239,7 +248,11 @@ public:
                 if (resonanceSmoothed.isSmoothing()) filter.setResonance (resonanceSmoothed.getNextValue()); // a jump clicks
                 const float fc = juce::jlimit (20.0f, (float) getSampleRate() * 0.45f, cutoff.getNextValue() * cutMul);
                 if (fc != lastCutoff) { filter.setCutoffFrequency (fc); lastCutoff = fc; } // a tan() per call: skip when unchanged
-                s = last = filter.processSample (0, osc (w, pitchMul, juce::jlimit (0.05f, 0.95f, width)) * level * amp * adsr.getNextSample());
+                const float pw = juce::jlimit (0.05f, 0.95f, width), m2 = mix2Smoothed.getNextValue();
+                float o = osc (w, phase, dt * pitchMul, table, pw);
+                // mix 0: osc 1 bit-identical, osc 2 not computed (its phase waits; the mix ramps in from 0, so no click)
+                if (m2 > 0.0f) o += m2 * (osc (w2, phase2, dt2 * pitchMul, table2, pw) - o);
+                s = last = filter.processSample (0, o * level * amp * adsr.getNextSample());
                 if (! adsr.isActive()) { clearCurrentNote(); active = false; last = 0.0f; }
             }
             s += residual;
@@ -268,10 +281,12 @@ private:
 
     void updatePitch()
     {
-        const double semis = (bend - 8192) / 8192.0 * 2.0; // +-2 semitone bend range
+        const double semis = (bend - 8192) / 8192.0 * 2.0 + params.tune + params.fine / 100.0; // +-2 semitone bend range
         const auto note = getCurrentlyPlayingNote();
         dt = juce::MidiMessage::getMidiNoteInHertz (note) * std::pow (2.0, semis / 12.0) / getSampleRate();
+        dt2 = dt * std::pow (2.0, (params.osc2Tune + params.osc2Fine / 100.0) / 12.0);
         table = Wavetables::get().tableFor (dt * 1.06); // room for +1 semitone of vibrato without aliasing
+        table2 = Wavetables::get().tableFor (dt2 * 1.06);
     }
 
     float lfoDepth() const { return juce::jlimit (0.0f, 1.0f, params.lfoDepth.load() + params.modWheel.load()); }
@@ -286,6 +301,8 @@ private:
         cutoff.setTargetValue (targetCutoff());
         lfoDepthSmoothed.setTargetValue (lfoDepth());
         widthSmoothed.setTargetValue (params.pulseWidth);
+        mix2Smoothed.setTargetValue (params.osc2Mix);
+        updatePitch(); // tuning knobs act on held notes; the phase runs on, so no click
         lfoStep = juce::jlimit (0.01, 50.0, (double) params.lfoRate.load()) / getSampleRate();
         lfoTarget = params.lfoTarget.load();
     }
@@ -308,14 +325,14 @@ public:
     }
 
 private:
-    float osc (int w, float pitchMul, float width)
+    float osc (int w, double& ph, double step, int tab, float width)
     {
-        const float v = w == 0 ? (float) std::sin (phase * juce::MathConstants<double>::twoPi)
-                      : w == 5 ? pulse (phase, width, table)
-                      : w < 4  ? Wavetables::get().read (w, phase, table)
+        const float v = w == 0 ? (float) std::sin (ph * juce::MathConstants<double>::twoPi)
+                      : w == 5 ? pulse (ph, width, tab)
+                      : w < 4  ? Wavetables::get().read (w, ph, tab)
                                : rng.nextFloat() * 2.0f - 1.0f;
-        phase += dt * pitchMul;
-        if (phase >= 1.0) phase -= 1.0;
+        ph += step;
+        if (ph >= 1.0) ph -= 1.0;
         return v;
     }
 
@@ -323,9 +340,9 @@ private:
     Envelope adsr;
     juce::dsp::StateVariableTPTFilter<float> filter;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> cutoff { 6000.0f };
-    juce::SmoothedValue<float> lfoDepthSmoothed, widthSmoothed, resonanceSmoothed;
+    juce::SmoothedValue<float> lfoDepthSmoothed, widthSmoothed, resonanceSmoothed, mix2Smoothed;
     juce::Random rng;
-    double phase = 0.0, dt = 0.0, lfoPhase = 0.0, lfoStep = 0.0;
+    double phase = 0.0, dt = 0.0, phase2 = 0.0, dt2 = 0.0, lfoPhase = 0.0, lfoStep = 0.0;
     static constexpr int lfoBlock = 16;
     std::array<float, 4> mod { 1.0f, 1.0f, 1.0f, 0.0f }, modStep {}; // interpolated LFO effect, see lfoAt
     int lfoCountdown = 0;
@@ -333,7 +350,7 @@ private:
     int lfoTarget = 0;
     float level = 0.0f;
     float last = 0.0f, residual = 0.0f, residualDecay = 0.0f; // last output, and what's left of a cut-off note
-    int bend = 8192, table = 0;
+    int bend = 8192, table = 0, table2 = 0;
 };
 
 // ---- Sampler: recorded audio mapped to keys and velocities (loaded by Sfz.h, played by SampleVoice) ----
@@ -531,6 +548,8 @@ public:
         synth.setCurrentPlaybackSampleRate (sampleRate);
         gainSmoothed.reset (sampleRate, 0.02); // a Volume jump clicked at 14x the waveform's own slope
         gainSmoothed.setCurrentAndTargetValue (params.gain);
+        panSmoothed.reset (sampleRate, 0.02);
+        panSmoothed.setCurrentAndTargetValue (params.pan);
 
         // Effects: everything allocated here, never on the audio thread; processed in chunks of <= maxChunk.
         rate = sampleRate;
@@ -548,23 +567,28 @@ public:
         delayTimeSmoothed.setCurrentAndTargetValue (params.delayTime);
     }
 
-    void render (juce::AudioBuffer<float>& buf, int start, int num, const juce::MidiBuffer& midi)
+    // `in`: optional audio (num samples from 0, mono or stereo, e.g. a voice) mixed with the voices before effects and Volume
+    void render (juce::AudioBuffer<float>& buf, int start, int num, const juce::MidiBuffer& midi, const juce::AudioBuffer<float>* in = nullptr)
     {
         buf.clear (start, num);
         for (const auto meta : midi) // mod wheel is engine-wide, so notes started later get it too
             if (meta.getMessage().isControllerOfType (1)) params.modWheel = meta.getMessage().getControllerValue() / 127.0f;
         synth.renderNextBlock (buf, midi, start, num);
+        if (in != nullptr) for (int c = 0; c < buf.getNumChannels(); ++c) buf.addFrom (c, start, *in, juce::jmin (c, in->getNumChannels() - 1), 0, num);
         applyEffects (buf, start, num);
         gainSmoothed.setTargetValue (params.gain);
+        panSmoothed.setTargetValue (params.pan);
         float blockPeak = 0;
         int hits = 0;
         auto* const* ch = buf.getArrayOfWritePointers();
+        const bool stereo = buf.getNumChannels() == 2;
         for (int i = start; i < start + num; ++i)
         {
-            const float g = gainSmoothed.getNextValue();
+            const float g = gainSmoothed.getNextValue(), p = panSmoothed.getNextValue();
             for (int c = 0; c < buf.getNumChannels(); ++c)
             {
-                const float x = ch[c][i] * g;
+                // Balance pan: the signal is already stereo (reverb), so the far side fades and the centre stays x1 exactly
+                const float x = ch[c][i] * g * (stereo ? juce::jmin (1.0f, c == 0 ? 1.0f - p : 1.0f + p) : 1.0f);
                 const float a = std::abs (x);
                 blockPeak = juce::jmax (blockPeak, a);
                 hits += a > 0.8f ? 1 : 0;
@@ -646,7 +670,7 @@ public:
     std::atomic<juce::int64> limiterHits { 0 }; // samples the safety clip has shaped, ever
     SynthParams params;
     juce::Synthesiser synth;
-    juce::SmoothedValue<float> gainSmoothed { 0.6f };
+    juce::SmoothedValue<float> gainSmoothed { 0.6f }, panSmoothed;
     juce::SynthesiserSound::Ptr current; // AnySound (synth) or an InstrumentSound (sampler)
 
     static constexpr int maxChunk = 512;

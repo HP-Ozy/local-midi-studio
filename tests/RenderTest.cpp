@@ -15,6 +15,8 @@
 #include "Library.h"
 #include "Song.h"
 #include "SongFile.h"
+#include "Steps.h"
+#include "Notes.h"
 #include <thread>
 #include <set>
 
@@ -803,13 +805,14 @@ int main (int argc, char** argv)
 
     // CPU benchmark: ms to render 1 s with 32 sounding voices, median of 5 runs, per LFO target (saw, effects off)
     {
-        auto bench = [&] (int target, float depth)
+        auto bench = [&] (int target, float depth, float osc2 = 0.0f)
         {
             std::vector<double> t;
             for (int k = 0; k < 5; ++k)
             {
                 auto e = fresh();
                 e->params.lfoTarget = target; e->params.lfoDepth = depth; e->params.wave = target == 3 ? 5 : 1;
+                e->params.osc2Mix = osc2; e->params.osc2Fine = 7.0f; // osc 2: a detuned saw
                 e->render (buf, 0, block, many);
                 const auto t0 = juce::Time::getMillisecondCounterHiRes();
                 run (*e, 1.0);
@@ -818,8 +821,8 @@ int main (int argc, char** argv)
             std::sort (t.begin(), t.end());
             return t[2];
         };
-        std::printf ("CPU (32 voices, 1 s, median of 5): LFO off %.1f ms | vibrato %.1f | filter %.1f | tremolo %.1f | PWM %.1f\n",
-                     bench (0, 0.0f), bench (0, 1.0f), bench (1, 1.0f), bench (2, 1.0f), bench (3, 1.0f));
+        std::printf ("CPU (32 voices, 1 s, median of 5): LFO off %.1f ms | vibrato %.1f | filter %.1f | tremolo %.1f | PWM %.1f | osc 2 %.1f\n",
+                     bench (0, 0.0f), bench (0, 1.0f), bench (1, 1.0f), bench (2, 1.0f), bench (3, 1.0f), bench (0, 0.0f, 0.5f));
     }
 
     // Effects: delay echo timing/levels, reverb tail vs size and stereo width, chorus modulation, extremes.
@@ -1031,6 +1034,9 @@ int main (int argc, char** argv)
         clicks += knobClick ("Chorus mix", [] (SynthEngine&) {}, [] (SynthEngine& e) { e.params.chorusMix = 1.0f; }) > 1.05f;
         clicks += knobClick ("Delay mix",  [] (SynthEngine&) {}, [] (SynthEngine& e) { e.params.delayMix = 1.0f; }) > 1.05f;
         clicks += knobClick ("Reverb mix", [] (SynthEngine&) {}, [] (SynthEngine& e) { e.params.reverbMix = 1.0f; }) > 1.05f;
+        clicks += knobClick ("Pan",        [] (SynthEngine&) {}, [] (SynthEngine& e) { e.params.pan = 1.0f; }) > 1.05f; // left (measured) fades out
+        clicks += knobClick ("Osc 2 mix",  [] (SynthEngine& e) { e.params.osc2Wave = 0; e.params.osc2Tune = -12.0f; }, [] (SynthEngine& e) { e.params.osc2Mix = 1.0f; }) > 1.05f; // to a sine an octave down
+        clicks += knobClick ("Pan back",   [] (SynthEngine& e) { e.params.pan = 1.0f; }, [] (SynthEngine& e) { e.params.pan = 0.0f; }) > 1.05f; // left fades in
         CHECK (clicks == 0);
         // Negative control: switching sine -> square mid-note is a real discontinuity; the metric must flag it
         const float control = knobClick ("(control)", [] (SynthEngine&) {}, [] (SynthEngine& e) { e.params.wave = 2; });
@@ -1542,6 +1548,18 @@ note_offset=2
         song->run = false; play (0.3); t1.solo = false;
         CHECK (win (muted, 0.52, 0.58) > 0.01f && win (muted, 1.02, 1.08) < 1e-4f && win (solo, 0.52, 0.58) < 1e-4f && win (solo, 1.02, 1.08) > 0.01f);
 
+        // Resuming mid-song (an edit while playing): notes already passed must not all fire at once.
+        const auto keep = t0.clip;
+        t0.clip.clear(); // a note held across the resume point: the old code fired it at once
+        t0.clip.addEvent (M::noteOn (1, 69, 1.0f).withTimeStamp (0.5)); t0.clip.addEvent (M::noteOff (1, 69).withTimeStamp (1.2));
+        t0.clip.updateMatchedPairs();
+        song->startPos = (juce::int64) (0.8 * sr); song->run = true;
+        const auto resumed = play (0.5);
+        song->run = false; play (0.3);
+        t0.clip = keep;
+        std::printf ("Song resume at 0.8 s: start %.4f (want silence), track 1 at +0.2 s %.3f\n", win (resumed, 0.0, 0.15), win (resumed, 0.22, 0.28));
+        CHECK (win (resumed, 0.0, 0.15) < 1e-4f && win (resumed, 0.22, 0.28) > 0.01f);
+
         t0.engine.params.gain = 0.0f; // live notes go to the selected track only
         play (0.1);                   // let the 20 ms Volume smoothing reach 0 first
         juce::MidiBuffer live; live.addEvent (M::noteOn (1, 60, 1.0f), 0);
@@ -1620,7 +1638,8 @@ note_offset=2
     // ---- Song file: round trip, and bad files are refused as a whole ----
     {
         auto a = std::make_unique<Song>();
-        a->count = 3; a->bpm = 97.0; a->metronome = false; a->selected = 2;
+        a->count = 3; a->bpm = 97.0; a->metronome = false; a->selected = 2; a->master = 0.25f;
+        a->tracks[2]->engine.params.pan = -0.5f;
         a->tracks[0]->engine.params.cutoff = 1234.0f; a->tracks[1]->engine.params.wave = 3; a->tracks[2]->engine.params.reverbMix = 0.4f;
         a->tracks[1]->mute = true; a->tracks[2]->solo = true;
         a->tracks[0]->clip.addEvent (M::noteOn (1, 60, 0.7f).withTimeStamp (0.25));
@@ -1644,13 +1663,20 @@ note_offset=2
             }
             return true;
         };
-        CHECK (err.isEmpty() && b.tracks.size() == 3 && b.bpm == 97.0 && ! b.metronome && b.selected == 2);
+        CHECK (err.isEmpty() && b.tracks.size() == 3 && b.bpm == 97.0 && ! b.metronome && b.selected == 2 && b.master == 0.25f);
         if (b.tracks.size() == 3)
         {
+            CHECK (b.tracks[2]->params.pan == -0.5f && b.tracks[0]->params.pan == 0.0f);
             CHECK (b.tracks[0]->params.cutoff == 1234.0f && b.tracks[1]->params.wave == 3 && std::abs (b.tracks[2]->params.reverbMix - 0.4f) < 1e-6f);
             CHECK (b.tracks[1]->mute && ! b.tracks[0]->mute && b.tracks[2]->solo && b.tracks[1]->instrument.isEmpty());
             CHECK (sameClip (a->tracks[0]->clip, b.tracks[0]->clip) && sameClip (a->tracks[1]->clip, b.tracks[1]->clip) && b.tracks[2]->clip.getNumEvents() == 0);
         }
+        SongFile::Loaded d; // the default setup: same sounds, no notes
+        CHECK (SongFile::parse (SongFile::toJson (*a, inst, false), d).isEmpty() && d.tracks.size() == 3
+               && d.tracks[0]->clip.getNumEvents() == 0 && d.tracks[1]->clip.getNumEvents() == 0 && d.tracks[0]->params.cutoff == 1234.0f);
+        SongFile::Loaded f; // the built-in default New song falls back to
+        CHECK (SongFile::parse (R"({"format":"LocalMIDIStudio.song","version":1,"tracks":[{},{}]})", f).isEmpty() && f.tracks.size() == 2
+               && f.master == 1.0f && f.tracks[0]->params.pan == 0.0f); // songs saved before the mixer: full master, centred
         auto refused = [] (const juce::String& text) { SongFile::Loaded l; const auto e = SongFile::parse (text, l); return e.isNotEmpty() ? e : juce::String ("ACCEPTED"); };
         const juce::String bad[] {
             R"({"format":"Other","version":1,"tracks":[{}]})",
@@ -1665,6 +1691,494 @@ note_offset=2
         for (auto& text : bad) { const auto e = refused (text); refusedCount += e != "ACCEPTED" ? 1 : 0; if (e == "ACCEPTED") std::printf ("  accepted bad song: %s\n", text.toRawUTF8()); }
         std::printf ("Song file: round trip ok, %d/%d bad files refused (e.g. '%s')\n", refusedCount, (int) std::size (bad), refused (bad[3]).toRawUTF8());
         CHECK (refusedCount == (int) std::size (bad));
+    }
+
+    // Step sequencer: pattern -> clip (repeated, on the sixteenths) -> pattern; a slightly loose take reads as the same pattern.
+    {
+        Steps::Pattern p {};
+        std::array<int, Steps::rows> sounds {};
+        for (int r = 0; r < Steps::rows; ++r) sounds[(size_t) r] = 36 + r;
+        for (int s : { 0, 4, 8, 12 }) p[0][(size_t) s] = true;  // kick
+        for (int s : { 4, 12 }) p[1][(size_t) s] = true;        // snare
+        for (int s = 0; s < 16; s += 2) p[2][(size_t) s] = true; // hats
+        const double bar = 2.0; // 120 BPM
+        const auto clip = Steps::render (p, sounds, bar, 2);
+        int ons = 0; bool kickAt2_5 = false;
+        for (auto* e : clip) if (e->message.isNoteOn()) { ++ons; kickAt2_5 |= e->message.getNoteNumber() == 36 && std::abs (e->message.getTimeStamp() - 2.5) < 1e-9; }
+        juce::MidiMessageSequence loose;
+        for (auto* e : clip) loose.addEvent (e->message, (e->message.getNoteNumber() % 2 == 0 ? 0.012 : -0.012));
+        loose.updateMatchedPairs();
+        const bool roundTrip = Steps::read (clip, sounds, bar) == p, looseOk = Steps::read (loose, sounds, bar) == p;
+        std::printf ("Steps: %d notes in 2 bars (want 28), kick at 2.5 s %d, round trip %d, loose take %d, same %d/%d\n",
+                     ons, kickAt2_5, roundTrip, looseOk, Steps::same (clip, Steps::render (p, sounds, bar, 2)), Steps::same (clip, loose));
+        CHECK (ons == 28 && kickAt2_5 && roundTrip && looseOk);
+        CHECK (Steps::same (clip, Steps::render (p, sounds, bar, 2)) && ! Steps::same (clip, loose) && ! Steps::same (clip, Steps::render (p, sounds, bar, 1)));
+    }
+
+    // Piano roll: read -> write keeps every note and the non-note events; back-to-back repeats of one key both sound;
+    // quantize snaps starts to the grid and lengths to whole steps.
+    {
+        juce::MidiMessageSequence clip;
+        clip.addEvent (M::noteOn (1, 60, (juce::uint8) 90).withTimeStamp (0.13)); clip.addEvent (M::noteOff (1, 60).withTimeStamp (0.36));
+        clip.addEvent (M::noteOn (1, 64, (juce::uint8) 70).withTimeStamp (0.49)); // never released
+        clip.addEvent (M::controllerEvent (1, 64, 127).withTimeStamp (0.2));
+        clip.addEvent (M::pitchWheel (1, 9000).withTimeStamp (0.3));
+        clip.updateMatchedPairs();
+        auto notes = Notes::read (clip);
+        const auto back = Notes::write (notes, clip);
+        int ons = 0, others = 0;
+        for (auto* e : back) { ons += e->message.isNoteOn(); others += ! e->message.isNoteOnOrOff(); }
+        const auto again = Notes::read (back);
+        const bool kept = notes.size() == 2 && again.size() == 2 && ons == 2 && others == 2
+                          && again[0].note == 60 && again[0].velocity == 90 && std::abs (again[0].end - 0.36) < 1e-9
+                          && std::abs (again[1].end - 0.74) < 1e-9; // unreleased: given 0.25 s
+
+        // Two 1/16 notes of the same key back to back: the first note's off must not cut the second
+        const std::vector<Notes::Note> repeat { { 0.0, 0.125, 60, 100, 1 }, { 0.125, 0.25, 60, 100, 1 } };
+        const auto rs = Notes::write (repeat, {});
+        auto e = fresh (0);
+        e->params.release = 0.01f;
+        std::vector<float> x;
+        juce::AudioBuffer<float> b (1, block);
+        int idx = 0;
+        for (juce::int64 p = 0; p < (juce::int64) (0.3 * sr); p += block)
+        {
+            juce::MidiBuffer mb;
+            idx = addEventsInRange (rs, idx, p, block, sr, mb);
+            e->render (b, 0, block, mb);
+            x.insert (x.end(), b.getReadPointer (0), b.getReadPointer (0) + block);
+        }
+        const float second = rms ({ x.begin() + (long) (0.17 * sr), x.begin() + (long) (0.23 * sr) });
+
+        Notes::quantize (notes, 0.125);
+        const bool snapped = std::abs (notes[0].start - 0.125) < 1e-9 && std::abs (notes[0].end - 0.375) < 1e-9  // 0.13..0.36 -> 0.125..0.375
+                             && std::abs (notes[1].start - 0.5) < 1e-9 && std::abs (notes[1].end - 0.75) < 1e-9; // 0.49..0.74 -> 0.5..0.75
+        std::printf ("Notes: round trip %d, repeated key second note %.3f (want sound), quantize %d\n", kept, second, snapped);
+        CHECK (kept && second > 0.01f && snapped);
+    }
+
+    // ---- Voice tracks: playback on the song timeline, mic capture, export, song file ----
+    {
+        auto vs = std::make_unique<Song>();
+        vs->count = 2; vs->metronome = false; vs->prepare (sr, block);
+        auto& v0 = *vs->tracks[0];
+        juce::AudioBuffer<float> voice (1, (int) sr); // 1 s voice: silent, then a 440 Hz tone from 0.5 s
+        voice.clear();
+        for (int i = (int) (0.5 * sr); i < (int) sr; ++i) voice.setSample (0, i, 0.5f * (float) std::sin (juce::MathConstants<double>::twoPi * 440.0 * i / sr));
+        v0.audio.add (voice, 0);
+        auto play = [&] (double seconds, juce::int64 start, std::function<float (juce::int64)> micAt = {})
+        {
+            std::vector<float> x, mic ((size_t) block);
+            juce::AudioBuffer<float> b (2, block);
+            vs->startPos = start; vs->run = true;
+            for (int done = 0; done < seconds * sr; done += block)
+            {
+                if (micAt) for (int k = 0; k < block; ++k) mic[(size_t) k] = micAt (start + done + k); // what the mic hears at that song sample
+                vs->render (b, 0, block, {}, 100.0 + done / sr, -1, nullptr, micAt ? mic.data() : nullptr);
+                x.insert (x.end(), b.getReadPointer (0), b.getReadPointer (0) + block);
+            }
+            vs->run = false;
+            vs->render (b, 0, block, {}, 0.0); // the audio thread sees the stop
+            return x;
+        };
+        auto win = [&] (const std::vector<float>& x, double a, double b2) { return rms ({ x.begin() + (long) (a * sr), x.begin() + (long) (b2 * sr) }); };
+        const auto heard = play (1.2, 0);
+        v0.engine.params.gain = 0.3f; v0.engine.prepare (sr); // half the default 0.6, without a smoothing ramp
+        const auto half = play (1.2, 0);
+        v0.engine.params.gain = 0.6f; v0.engine.prepare (sr);
+        v0.mute = true;
+        const auto muted = play (1.2, 0);
+        v0.mute = false;
+        std::printf ("Voice: before 0.5 s %.5f, tone %.4f, Volume 0.3 ratio %.3f (want 0.5), muted %.5f, song length %.2f s\n",
+                     win (heard, 0.1, 0.45), win (heard, 0.6, 0.9), win (half, 0.6, 0.9) / win (heard, 0.6, 0.9), win (muted, 0.6, 0.9), vs->length());
+        CHECK (win (heard, 0.1, 0.45) < 1e-6f && win (heard, 0.6, 0.9) > 0.1f && std::abs (win (half, 0.6, 0.9) / win (heard, 0.6, 0.9) - 0.5f) < 1e-3f
+               && win (muted, 0.6, 0.9) == 0.0f && std::abs (vs->length() - 1.0) < 1e-9);
+
+        // Mic capture: one bar-like count-in of 12000 samples first; each mic sample encodes its song position
+        vs->voiceTake.setSize (1, (int) (2 * sr), false, true);
+        vs->voiceTake.clear();
+        vs->voiceEnd = 0;
+        vs->voiceTrack = 0;
+        auto code = [] (juce::int64 p) { return (float) (p % 1000) / 1000.0f + 0.0005f; };
+        const auto during = play (1.0, -12000, code);
+        vs->voiceTrack = -1;
+        bool aligned = true;
+        for (int p = 0; p < 36000; ++p) aligned &= vs->voiceTake.getSample (0, p) == code (p);
+        std::printf ("Voice take: %lld samples written (want %d), aligned to the song sample %d, old voice silent while recording %.5f\n",
+                     (long long) vs->voiceEnd.load(), (int) (std::ceil (sr / block) * block) - 12000, aligned, win (during, 0.85, 0.95)); // during = song 0.6..0.7 s
+        CHECK (vs->voiceEnd == (juce::int64) (std::ceil (sr / block) * block) - 12000 && aligned && win (during, 0.85, 0.95) < 1e-6f);
+
+        // Export: the mixdown includes the voice, through the track's engine
+        const auto mix = vs->mixdown (sr);
+        float mixPeak = 0;
+        for (int i = (int) (0.6 * sr); i < (int) (0.9 * sr); ++i) mixPeak = std::max (mixPeak, std::abs (mix.getSample (0, i)));
+        std::printf ("Voice in the exported mixdown: %.2f s long, tone peak %.3f\n", mix.getNumSamples() / sr, mixPeak);
+        CHECK (mix.getNumSamples() >= (int) sr && mixPeak > 0.1f);
+
+        // Song file: the voice is a WAV next to the song; anything that could point elsewhere is refused
+        std::array<juce::File, Song::maxTracks> none;
+        SongFile::Loaded lv;
+        CHECK (SongFile::parse (SongFile::toJson (*vs, none, true, "my song"), lv).isEmpty() && lv.tracks[0]->audio == "my song-track1.wav" && lv.tracks[1]->audio.isEmpty());
+        int refusedVoice = 0;
+        for (auto bad : { R"(..\\x.wav)", R"(C:/x.wav)", R"(sub/x.wav)", R"(x.exe)" })
+        {
+            SongFile::Loaded l;
+            const auto text = juce::String (R"({"format":"LocalMIDIStudio.song","version":1,"tracks":[{"audio":")") + juce::String (bad).replace ("\\", "\\\\") + "\"}]}";
+            refusedVoice += SongFile::parse (text, l).isNotEmpty() ? 1 : 0;
+        }
+        std::printf ("Voice in song file: round trip ok, %d/4 bad audio names refused\n", refusedVoice);
+        CHECK (refusedVoice == 4);
+
+        // Audio regions: moved on the song (the tone that started at 0.5 s starts at 0.75 s), position kept in the song file
+        auto& r0 = v0.audio.regions[0];
+        r0.start = (juce::int64) (0.25 * sr);
+        const auto moved = play (1.4, 0);
+        std::printf ("Audio moved to 0.25 s: before 0.75 s %.5f, tone %.4f, song length %.2f s\n", win (moved, 0.3, 0.7), win (moved, 0.85, 1.15), vs->length());
+        CHECK (win (moved, 0.3, 0.7) < 1e-6f && win (moved, 0.85, 1.15) > 0.1f && std::abs (vs->length() - 1.25) < 1e-9);
+        r0.in = (int) (0.1 * sr); r0.out = (int) (0.9 * sr);
+        v0.audio.duplicate (0, (juce::int64) (2.0 * sr));
+        SongFile::Loaded la;
+        CHECK (SongFile::parse (SongFile::toJson (*vs, none, true, "my song"), la).isEmpty());
+        const auto& lt = *la.tracks[0];
+        const bool two = lt.regions.size() == 2;
+        std::printf ("Audio regions in song file: %d, first start %.3f in %.3f out %.3f lo %.3f hi %.3f s (want 0.250 0.100 0.900 0 1), second start %.3f\n", (int) lt.regions.size(),
+                     two ? lt.regions[0][0] : -9, two ? lt.regions[0][1] : -9, two ? lt.regions[0][2] : -9, two ? lt.regions[0][3] : -9, two ? lt.regions[0][4] : -9, two ? lt.regions[1][0] : -9);
+        CHECK (two && std::abs (lt.regions[0][0] - 0.25) < 1e-9 && std::abs (lt.regions[0][1] - 0.1) < 1e-9 && std::abs (lt.regions[0][2] - 0.9) < 1e-9
+               && lt.regions[0][3] == 0.0 && std::abs (lt.regions[0][4] - 1.0) < 1e-9 && std::abs (lt.regions[1][0] - 2.0) < 1e-9);
+        SongFile::Loaded old; // a song from before regions: one region over the whole file
+        CHECK (SongFile::parse (R"({"format":"LocalMIDIStudio.song","version":1,"tracks":[{"audio":"a.wav","audioStart":0.5}]})", old).isEmpty()
+               && old.tracks[0]->regions.size() == 1 && old.tracks[0]->regions[0][0] == 0.5 && old.tracks[0]->regions[0][2] == -1.0 && old.tracks[0]->regions[0][4] == -1.0);
+        int refusedPos = 0;
+        for (auto bad : { R"("audioStart":-1)", R"("audioIn":-0.5)", R"("audioOut":1e9)", R"("regions":[[0,0,-2,0,-1]])", R"("regions":[[0,0,1,0]])", R"("regions":[[-1,0,1,0,1]])" })
+        {
+            SongFile::Loaded l;
+            refusedPos += SongFile::parse (juce::String (R"({"format":"LocalMIDIStudio.song","version":1,"tracks":[{"audio":"a.wav",)") + bad + "}]}", l).isNotEmpty() ? 1 : 0;
+        }
+        std::printf ("Audio positions: %d/6 bad ones refused\n", refusedPos);
+        CHECK (refusedPos == 6);
+    }
+
+    // ---- AudioClip: what is heard where, trim, fades at the cuts, stereo, loop wrap ----
+    {
+        juce::AudioBuffer<float> src (2, (int) sr); // 440 Hz: left +, right -
+        for (int i = 0; i < src.getNumSamples(); ++i)
+        {
+            const float x = 0.8f * (float) std::sin (juce::MathConstants<double>::twoPi * 440.0 * i / sr);
+            src.setSample (0, i, x); src.setSample (1, i, -x);
+        }
+        AudioClip a;
+        a.add (src, 4800);
+        a.regions[0].in = 2427; a.regions[0].out = 24027; // both cuts near a peak of the sine: without fades they would click
+        juce::AudioBuffer<float> dst (2, (int) sr);
+        dst.clear();
+        a.addTo (dst, 0, dst.getNumSamples(), 0, sr);
+        const int fade = (int) (AudioClip::fadeSeconds * sr), len = 24027 - 2427;
+        bool placed = true, silentOutside = true, stereo = true;
+        for (int k = fade; k < len - fade; ++k) placed &= dst.getSample (0, 4800 + k) == src.getSample (0, 2427 + k);
+        for (int i = 0; i < dst.getNumSamples(); ++i)
+        {
+            if (i < 4800 || i >= 4800 + len) silentOutside &= dst.getSample (0, i) == 0.0f;
+            stereo &= dst.getSample (1, i) == -dst.getSample (0, i);
+        }
+        float worst = 0, peak = 0;
+        for (int i = 1; i < dst.getNumSamples(); ++i) { worst = std::max (worst, std::abs (dst.getSample (0, i) - dst.getSample (0, i - 1))); peak = std::max (peak, std::abs (dst.getSample (0, i))); }
+        const float clickRatio = worst / peak / (2.0f * (float) std::sin (juce::MathConstants<double>::pi * 440.0 / sr));
+        std::printf ("AudioClip: placed %d, silent outside %d, stereo %d, end %lld (want %d), worst step at the cuts %.2fx a clean sine (want <= 1.05)\n",
+                     placed, silentOutside, stereo, (long long) a.end(), 4800 + len, clickRatio);
+        CHECK (placed && silentOutside && stereo && a.end() == 4800 + len && clickRatio <= 1.05f);
+
+        // Loop: song samples from wrapAt on are heard from song 0 again
+        AudioClip w;
+        w.add (src, 0);
+        juce::AudioBuffer<float> lb (1, 600);
+        lb.clear();
+        w.addTo (lb, 0, 600, 10000 - 300, sr, 10000); // 300 samples before the wrap, 300 after
+        bool wrapped = true;
+        for (int k = 300 + fade; k < 600; ++k) wrapped &= lb.getSample (0, k) == src.getSample (0, k - 300);
+        for (int k = 0; k < 300; ++k) wrapped &= lb.getSample (0, k) == src.getSample (0, 10000 - 300 + k);
+        std::printf ("AudioClip loop wrap: heard from the start again %d\n", wrapped);
+        CHECK (wrapped);
+
+        // Cost: 8 tracks of stereo audio, 256-sample blocks (budget 5.33 ms at 48 kHz)
+        juce::AudioBuffer<float> blockBuf (2, 256);
+        const auto t0 = juce::Time::getHighResolutionTicks();
+        for (int p = 0; p + 256 <= (int) sr; p += 256)
+            for (int t = 0; t < 8; ++t) { blockBuf.clear(); w.addTo (blockBuf, 0, 256, p, sr); }
+        const double perBlock = juce::Time::highResolutionTicksToSeconds (juce::Time::getHighResolutionTicks() - t0) * 1000.0 / ((int) sr / 256);
+        std::printf ("AudioClip cost: %.4f ms per 256-sample block for 8 stereo tracks\n", perBlock);
+        CHECK (perBlock < 0.5);
+
+        // Split, duplicate, delete: a split plays exactly what the whole region played (no fades at the joint)
+        auto render = [&] (const AudioClip& c) { juce::AudioBuffer<float> o (2, 3 * (int) sr); o.clear(); c.addTo (o, 0, o.getNumSamples(), 0, sr); return o; };
+        AudioClip whole, cut;
+        whole.add (src, 1000);
+        cut.add (src, 1000);
+        const int right = cut.split (0, 1000 + 20027); // near a peak
+        const auto before = render (whole), after = render (cut);
+        bool same = right == 1 && cut.count == 2;
+        for (int i = 0; i < before.getNumSamples(); ++i) same &= before.getSample (0, i) == after.getSample (0, i);
+        CHECK (cut.split (0, 1000) == -1 && cut.split (0, 999) == -1); // at or outside an edge: nothing
+        const int copy = cut.duplicate (1, cut.end()); // the right half again, right after the end
+        const auto dup = render (cut);
+        const juce::int64 rs = cut.regions[1].start.load(), cs = cut.regions[(size_t) copy].start.load();
+        bool copied = copy == 2 && cs == 1000 + (int) sr;
+        for (int k = fade; k < (int) sr - 20027 - fade; ++k) copied &= dup.getSample (1, (int) (cs + k)) == dup.getSample (1, (int) (rs + k));
+        cut.remove (0);
+        const auto removed = render (cut);
+        bool gone = cut.count == 2;
+        for (int i = 0; i < 1000 + 20027; ++i) gone &= removed.getSample (0, i) == 0.0f;
+        std::printf ("Regions: split plays the same as unsplit %d, duplicate right after %d, delete silences it %d, %d samples of audio kept once\n",
+                     same, copied, gone, cut.buf.getNumSamples());
+        CHECK (same && copied && gone && cut.buf.getNumSamples() == (int) sr);
+        AudioClip two; // a second file on the same track: appended, mono joins stereo
+        juce::AudioBuffer<float> mono (1, 1000);
+        for (int i = 0; i < 1000; ++i) mono.setSample (0, i, 0.25f);
+        two.add (src, 0);
+        const int second = two.add (mono, (juce::int64) (2 * sr));
+        const auto both = render (two);
+        std::printf ("Second file on a track: region %d, pool %d samples x %d ch, heard at 2 s on both channels %d\n", second, two.buf.getNumSamples(), two.buf.getNumChannels(),
+                     both.getSample (0, (int) (2 * sr) + 500) == 0.25f && both.getSample (1, (int) (2 * sr) + 500) == 0.25f);
+        CHECK (second == 1 && two.buf.getNumSamples() == (int) sr + 1000 && two.buf.getNumChannels() == 2
+               && both.getSample (0, (int) (2 * sr) + 500) == 0.25f && both.getSample (1, (int) (2 * sr) + 500) == 0.25f && two.regions[1].lo == (int) sr);
+
+        // Reading a dropped file: a 44.1 kHz stereo WAV comes back at 48 kHz, still stereo, same duration and pitch
+        juce::AudioBuffer<float> cd (2, 44100);
+        for (int i = 0; i < 44100; ++i) { const float x = 0.5f * (float) std::sin (juce::MathConstants<double>::twoPi * 440.0 * i / 44100.0); cd.setSample (0, i, x); cd.setSample (1, i, -x); }
+        const auto cdFile = juce::File::createTempFile (".wav");
+        CHECK (writeWav (cd, 44100.0, cdFile));
+        const auto got = readAudioFile (cdFile, 48000.0, 600.0);
+        cdFile.deleteFile();
+        int ups = 0; // zero crossings upwards in 0.5 s of the middle: 220 for 440 Hz at the right rate
+        for (int i = 12000; i < 36000; ++i) ups += got.getSample (0, i - 1) < 0.0f && got.getSample (0, i) >= 0.0f;
+        std::printf ("Audio file 44.1 kHz stereo read at 48 kHz: %d channels, %d samples (want ~48000), %d cycles in 0.5 s (want 220), right = -left %d\n",
+                     got.getNumChannels(), got.getNumSamples(), ups, std::abs (got.getSample (1, 20000) + got.getSample (0, 20000)) < 1e-6f);
+        CHECK (got.getNumChannels() == 2 && std::abs (got.getNumSamples() - 48000) <= 2 && std::abs (ups - 220) <= 1
+               && std::abs (got.getSample (1, 20000) + got.getSample (0, 20000)) < 1e-6f && got.getSample (0, 20000) != 0.0f);
+        CHECK (readAudioFile (juce::File::getCurrentWorkingDirectory().getChildFile ("no such file.mp3"), 48000.0, 600.0).getNumSamples() == 0);
+        if (const auto mp3 = juce::SystemStats::getEnvironmentVariable ("LMS_MP3", {}); mp3.isNotEmpty()) // optional: an MP3 made with ffmpeg
+        {
+            const auto m = readAudioFile (juce::File (mp3), 48000.0, 600.0);
+            std::printf ("MP3 %s: %d channels, %.2f s, peak %.3f\n", mp3.toRawUTF8(), m.getNumChannels(), m.getNumSamples() / 48000.0, m.getMagnitude (0, m.getNumSamples()));
+            CHECK (m.getNumSamples() > 0);
+        }
+    }
+
+    // ---- Deleting a track: the later ones move up, the freed one comes back clean ----
+    {
+        auto ds = std::make_unique<Song>();
+        ds->count = 4; ds->prepare (sr, block);
+        for (int i = 0; i < 4; ++i) { ds->tracks[(size_t) i]->engine.params.gain = 0.1f * (float) (i + 1); ds->tracks[(size_t) i]->clip.addEvent (juce::MidiMessage::noteOn (1, 60 + i, 1.0f)); }
+        auto* third = ds->tracks[2].get();
+        ds->selected = 3;
+        ds->removeTrack (1);
+        const auto& freed = *ds->tracks[3];
+        const bool moved = ds->count == 3 && ds->tracks[1].get() == third && ds->tracks[1]->clip.getEventPointer (0)->message.getNoteNumber() == 62
+                           && std::abs (ds->tracks[2]->engine.params.gain.load() - 0.4f) < 1e-6f && ds->selected == 2;
+        const bool clean = freed.clip.getNumEvents() == 0 && freed.audio.empty() && std::abs (freed.engine.params.gain.load() - SynthParams().gain.load()) < 1e-6f;
+        std::printf ("Delete track: later tracks moved up %d, freed track reset %d\n", moved, clean);
+        CHECK (moved && clean);
+    }
+
+    // ---- Undo/redo history, loop recording ----
+    {
+        auto clipOf = [] (double t) { juce::MidiMessageSequence s; s.addEvent (M::noteOn (1, 60, 0.5f).withTimeStamp (t)); return s; };
+        std::array<juce::MidiMessageSequence, 2> tr { clipOf (0.0), clipOf (10.0) };
+        Notes::History h;
+        auto change = [&] (int t, double v) { h.changed (t, tr[(size_t) t]); tr[(size_t) t] = clipOf (v); };
+        const auto current = [&] (int t) { return tr[(size_t) t]; };
+        auto first = [&] (int t) { return tr[(size_t) t].getEventTime (0); };
+        Notes::History::Step s;
+        change (0, 1.0); change (1, 11.0); change (0, 2.0);
+        bool ok = true;
+        for (auto [track, want] : { std::pair { 0, 1.0 }, std::pair { 1, 10.0 }, std::pair { 0, 0.0 } }) // three undos, newest first
+        { ok &= h.undo (current, s) && s.track == track; tr[(size_t) s.track] = s.clip; ok &= first (track) == want; }
+        ok &= ! h.undo (current, s);
+        ok &= h.redo (current, s) && s.track == 0 && (tr[0] = s.clip, first (0) == 1.0); // redo the oldest undone change first
+        change (1, 12.0);
+        ok &= ! h.redo (current, s); // a new change clears redo
+        for (int i = 0; i < 60; ++i) change (0, 100.0 + i);
+        ok &= h.undos.size() == Notes::History::maxSteps;
+        std::printf ("History: 3 undos back to the start, redo, new change clears redo, capped at %zu: %d\n", Notes::History::maxSteps, ok);
+        CHECK (ok);
+
+        std::vector<Notes::Note> passes { { 0.25, 0.5, 60, 100, 1 }, { 2.25, 2.5, 62, 100, 1 }, { 4.75, 5.4, 64, 100, 1 } }; // 2 s loop, passes 0/1/2
+        Notes::fold (passes, 2.0);
+        auto same = [] (double v, double want) { return std::abs (v - want) < 1e-9; };
+        const bool folded = same (passes[0].start, 0.25) && same (passes[1].start, 0.25) && same (passes[1].end, 0.5) && same (passes[2].start, 0.75)
+                            && same (passes[2].end, 1.4) && passes[1].note == 62;
+        auto cross = std::vector<Notes::Note> { { 1.75, 2.5, 60, 100, 1 } }; // runs past the loop end: cut there
+        Notes::fold (cross, 2.0);
+        std::printf ("Fold: passes folded %d, note past the loop end ends at %.2f s (want 2.00)\n", folded, cross[0].end);
+        CHECK (folded && cross[0].end == 2.0);
+
+        // Loop recording in the engine: 0.5 s loop (24000 samples, so the wrap falls inside a 256-sample block).
+        auto loopSong = [&] (int recTrack)
+        {
+            auto sg = std::make_unique<Song>();
+            sg->count = 2; sg->metronome = false; sg->prepare (sr, block);
+            for (auto& t : sg->tracks) { t->engine.params.wave = 0; t->engine.params.release = 0.02f; }
+            sg->selected = recTrack; sg->recordTrack = recTrack;
+            sg->loopLen = (juce::int64) (0.5 * sr); sg->startPos = 0; sg->run = true;
+            return sg;
+        };
+        auto renderLoop = [&] (Song& sg, double seconds, std::vector<std::pair<int, M>> liveAt) // (absolute sample, message)
+        {
+            std::vector<float> x;
+            juce::AudioBuffer<float> b (2, block);
+            for (int done = 0; done < seconds * sr; done += block)
+            {
+                juce::MidiBuffer live;
+                for (auto& [at, m] : liveAt) if (at >= done && at < done + block) live.addEvent (m, at - done);
+                sg.render (b, 0, block, live, 100.0 + done / sr);
+                x.insert (x.end(), b.getReadPointer (0), b.getReadPointer (0) + block);
+            }
+            return x;
+        };
+        auto onset = [] (const std::vector<float>& x, double from) { size_t i = (size_t) (from * sr); while (i < x.size() && std::abs (x[i]) < 1e-6f) ++i; return (juce::int64) i; };
+        auto win = [&] (const std::vector<float>& x, double a, double b2) { return rms ({ x.begin() + (long) (a * sr), x.begin() + (long) (b2 * sr) }); };
+        auto sg = loopSong (0);
+        const auto x = renderLoop (*sg, 1.3, { { 4900, M::noteOn (1, 69, 1.0f) }, { 9700, M::noteOff (1, 69) } }); // pass 0 only: 0.102 .. 0.202 s
+        const auto o0 = onset (x, 0.05), o1 = onset (x, 0.55), o2 = onset (x, 1.05);
+        std::printf ("Loop take: stored %d events, onsets %lld / %lld / %lld (pass length 24000: %lld, %lld), between notes %.5f\n",
+                     sg->loopCount.load(), (long long) o0, (long long) o1, (long long) o2, (long long) (o1 - o0), (long long) (o2 - o1), win (x, 0.30, 0.45));
+        CHECK (sg->loopCount == 2 && o1 - o0 == 24000 && o2 - o1 == 24000 && win (x, 0.62, 0.68) > 0.01f && win (x, 0.30, 0.45) < 1e-5f);
+
+        // A clip note running past the loop end (0.3 .. 0.9 s) is ended at the wrap, not left hanging
+        auto sg2 = loopSong (1);
+        auto& t0 = sg2->tracks[0]->clip;
+        t0.addEvent (M::noteOn (1, 69, 1.0f).withTimeStamp (0.3)); t0.addEvent (M::noteOff (1, 69).withTimeStamp (0.9)); t0.updateMatchedPairs();
+        const auto y = renderLoop (*sg2, 1.0, {});
+        std::printf ("Loop wrap: clip note sounding at 0.45 s %.3f, after the wrap (0.56..0.78 s) %.6f (want 0)\n", win (y, 0.40, 0.45), win (y, 0.56, 0.78));
+        CHECK (win (y, 0.40, 0.45) > 0.01f && win (y, 0.56, 0.78) < 1e-5f);
+
+        // Worst case for the audio thread: a full loop take is scanned every block
+        auto sg3 = loopSong (0);
+        juce::AudioBuffer<float> b3 (2, block);
+        sg3->render (b3, 0, block, {}, 100.0); // transport start resets the take: fill it after
+        for (auto& e : sg3->loopTake) { e.pos = (juce::int64) (0.25 * sr); e.size = 3; e.data[0] = 0xB0; e.data[1] = 7; e.data[2] = 100; } // a CC each
+        sg3->loopCount = Song::loopTakeMax;
+        double worstMs = 0;
+        for (int i = 0; i < 200; ++i)
+        {
+            const auto t0 = juce::Time::getMillisecondCounterHiRes();
+            sg3->render (b3, 0, block, {}, 100.0);
+            worstMs = std::max (worstMs, juce::Time::getMillisecondCounterHiRes() - t0);
+        }
+        std::printf ("Loop take full (%d events): worst block %.3f ms (a %d-sample block lasts %.2f ms)\n", Song::loopTakeMax, worstMs, block, block * 1000.0 / sr);
+        CHECK (worstMs < 2.0);
+    }
+
+    // ---- Oscillator tuning, second oscillator + mix ----
+    {
+        auto hz = [] (const std::vector<float>& x, double from, double to) // rising zero crossings, interpolated
+        {
+            double first = -1, lastT = 0; int n = 0;
+            for (size_t i = (size_t) (from * sr) + 1; i < (size_t) (to * sr); ++i)
+                if (x[i - 1] < 0 && x[i] >= 0)
+                {
+                    const double t = (i - 1 + x[i - 1] / (x[i - 1] - x[i])) / sr;
+                    if (first < 0) first = t; else ++n;
+                    lastT = t;
+                }
+            return n / (lastT - first);
+        };
+        auto tone = [] (auto setup, double seconds, int note = 69)
+        {
+            auto e = fresh (0);
+            e->params.cutoff = 20000.0f;
+            setup (e->params);
+            return run (*e, seconds, { M::noteOn (1, note, 1.0f) });
+        };
+        const double octUp = hz (tone ([] (SynthParams& p) { p.tune = 12.0f; }, 1.2), 0.1, 1.1);
+        const double down = hz (tone ([] (SynthParams& p) { p.tune = -1.0f; p.fine = 50.0f; }, 1.2), 0.1, 1.1);
+        const double fifth = hz (tone ([] (SynthParams& p) { p.osc2Wave = 0; p.osc2Tune = 7.0f; p.osc2Mix = 1.0f; }, 1.2), 0.1, 1.1);
+        std::printf ("Tuning: +12 st %.2f Hz (880), -1 st +50 c %.2f Hz (427.47), osc 2 alone +7 st %.2f Hz (659.26)\n", octUp, down, fifth);
+        CHECK (std::abs (octUp - 880.0) < 0.05 && std::abs (down - 427.474) < 0.05 && std::abs (fifth - 659.255) < 0.05);
+
+        // Tune on a held note acts at once (next block), the note keeps sounding
+        auto e = fresh (0);
+        auto x = run (*e, 0.6, { M::noteOn (1, 69, 1.0f) });
+        e->params.tune = 12.0f;
+        const auto y = run (*e, 0.6);
+        x.insert (x.end(), y.begin(), y.end());
+        const double before = hz (x, 0.1, 0.55), after = hz (x, 0.65, 1.15);
+        std::printf ("Tune on a held note: %.2f -> %.2f Hz\n", before, after);
+        CHECK (std::abs (before - 440.0) < 0.05 && std::abs (after - 880.0) < 0.05);
+
+        // Mix 0: osc 2 (even noise) changes nothing, bit for bit
+        const auto plain = tone ([] (SynthParams& p) { p.wave = 1; }, 0.5);
+        const auto off = tone ([] (SynthParams& p) { p.wave = 1; p.osc2Wave = 4; p.osc2Tune = 5.0f; }, 0.5);
+        CHECK (plain == off);
+
+        // Osc 2 transposed up uses its own band-limited table: saw +24 st on A6 = 7040 Hz. With osc 1's table the 5th
+        // harmonic (35.2 kHz) would fold back to 12.8 kHz at -14 dBc.
+        const auto hi = tone ([] (SynthParams& p) { p.osc2Wave = 1; p.osc2Tune = 24.0f; p.osc2Mix = 1.0f; }, 1.2, 93);
+        auto bin = [&] (double f) // Hann-windowed DFT magnitude over 0.1..1.1 s
+        {
+            double re = 0, im = 0;
+            const int a = (int) (0.1 * sr), n = (int) sr;
+            for (int i = 0; i < n; ++i)
+            {
+                const double w = 0.5 - 0.5 * std::cos (juce::MathConstants<double>::twoPi * i / n), ph = juce::MathConstants<double>::twoPi * f * i / sr;
+                re += w * hi[(size_t) (a + i)] * std::cos (ph); im -= w * hi[(size_t) (a + i)] * std::sin (ph);
+            }
+            return std::sqrt (re * re + im * im);
+        };
+        const double alias = 20.0 * std::log10 (bin (12800.0) / bin (7040.0) + 1e-12);
+        std::printf ("Osc 2 saw +24 st on A6: fold-back at 12.8 kHz %.1f dBc (wrong table: about -14)\n", alias);
+        CHECK (alias < -90.0);
+    }
+
+    // ---- Mixer: balance pan per track, master volume (live and in the exported mixdown) ----
+    {
+        auto lr = [] (float pan) // L and R RMS of a held sine A4, 0.5..1 s, after the pan smoothing
+        {
+            auto e = fresh (0);
+            e->params.pan = pan;
+            e->prepare (sr);
+            juce::AudioBuffer<float> b (2, block);
+            juce::MidiBuffer ev;
+            ev.addEvent (M::noteOn (1, 69, 1.0f), 0);
+            std::vector<float> l, r;
+            for (int done = 0; done < sr; done += block)
+            {
+                e->render (b, 0, block, ev);
+                ev.clear();
+                if (done >= sr / 2) { l.insert (l.end(), b.getReadPointer (0), b.getReadPointer (0) + block); r.insert (r.end(), b.getReadPointer (1), b.getReadPointer (1) + block); }
+            }
+            return std::pair { rms (l), rms (r) };
+        };
+        const auto c = lr (0.0f), hl = lr (-1.0f), q = lr (0.5f);
+        std::printf ("Pan: centre L/R %.4f/%.4f, hard left %.4f/%.4f, +0.5 L/R ratio to centre %.3f/%.3f (want 0.5/1)\n",
+                     c.first, c.second, hl.first, hl.second, q.first / c.first, q.second / c.second);
+        CHECK (c.first > 0.01f && c.first == c.second && hl.first == c.first && hl.second == 0.0f
+               && std::abs (q.first / c.first - 0.5f) < 1e-3f && q.second == c.second);
+
+        auto masterRun = [] (float master) // song level (block peak of channel 0 at 0.5..1 s) and mixdown peak
+        {
+            auto s = std::make_unique<Song>();
+            s->metronome = false;
+            s->master = master;
+            s->prepare (sr, block);
+            auto& t = *s->tracks[0];
+            t.engine.params.wave = 0;
+            t.clip.addEvent (M::noteOn (1, 69, 1.0f).withTimeStamp (0.0)); t.clip.addEvent (M::noteOff (1, 69).withTimeStamp (1.0));
+            t.clip.updateMatchedPairs();
+            s->startPos = 0; s->run = true;
+            juce::AudioBuffer<float> b (2, block);
+            std::vector<float> x;
+            for (int done = 0; done < sr; done += block)
+            {
+                s->render (b, 0, block, {}, 100.0 + done / sr);
+                if (done >= sr / 2) x.insert (x.end(), b.getReadPointer (0), b.getReadPointer (0) + block);
+            }
+            s->run = false;
+            const auto mix = s->mixdown (sr);
+            return std::pair { peak (x), mix.getMagnitude (0, 0, mix.getNumSamples()) };
+        };
+        const auto full = masterRun (1.0f), half = masterRun (0.5f);
+        std::printf ("Master 0.5: live %.3f, mixdown %.3f of master 1 (want 0.5)\n", half.first / full.first, half.second / full.second);
+        CHECK (full.first > 0.01f && std::abs (half.first / full.first - 0.5f) < 1e-3f && std::abs (half.second / full.second - 0.5f) < 1e-3f);
     }
 
     // Not a pass/fail check: proves JUCE can see the real MIDI hardware on this machine
