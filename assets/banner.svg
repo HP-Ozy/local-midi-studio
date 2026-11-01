@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300">
+  <rect width="1200" height="300" rx="24" fill="#1b1f24"/>
+  <rect x="0" y="0" width="1200" height="6" rx="3" fill="#f0a030"/>
+  <!-- mini keyboard -->
+  <g transform="translate(90 70)">
+    <rect width="220" height="160" rx="14" fill="#252a30"/>
+    <g fill="#dde2e7">
+      <rect x="14" y="60" width="26" height="86" rx="3"/><rect x="44" y="60" width="26" height="86" rx="3"/>
+      <rect x="74" y="60" width="26" height="86" rx="3"/><rect x="104" y="60" width="26" height="86" rx="3"/>
+      <rect x="134" y="60" width="26" height="86" rx="3"/><rect x="164" y="60" width="26" height="86" rx="3"/>
+      <rect x="194" y="60" width="12" height="86" rx="3"/>
+    </g>
+    <g fill="#15181c">
+      <rect x="32" y="60" width="16" height="52" rx="2"/><rect x="62" y="60" width="16" height="52" rx="2"/>
+      <rect x="122" y="60" width="16" height="52" rx="2"/><rect x="152" y="60" width="16" height="52" rx="2"/>
+      <rect x="182" y="60" width="16" height="52" rx="2"/>
+    </g>
+    <g stroke-width="5" fill="none" stroke-linecap="round">
+      <circle cx="34" cy="30" r="13" stroke="#f0a030"/><circle cx="78" cy="30" r="13" stroke="#5ec27a"/>
+      <circle cx="122" cy="30" r="13" stroke="#3fa7d6"/><circle cx="166" cy="30" r="13" stroke="#b07ee8"/>
+    </g>
+  </g>
+  <text x="360" y="148" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="72" font-weight="700" fill="#dde2e7">Local MIDI Studio</text>
+  <text x="362" y="200" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="28" fill="#f0a030">Plug in a keyboard. Put on headphones. Play.</text>
+  <text x="362" y="240" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="20" fill="#8a939c">offline synth · sampler · drum pads · multitrack recorder</text>
+</svg>

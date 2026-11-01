@@ -1,0 +1,32 @@
+﻿Stress: 30 min on 'Cuffie (Realtek USB Audio)', 48000 Hz, 480-sample buffer (10.0 ms budget), output silenced
+min  1 | worst block 2.159 of 10.0 ms | over budget 0 | bad samples 0 | peak 1.000 | max voices 32 | CPU 11.7% | MIDI 2788, knobs 961, presets 4 | memory 7.2 MB | driver xruns -1
+min  2 | worst block 2.174 of 10.0 ms | over budget 0 | bad samples 0 | peak 1.000 | max voices 32 | CPU 3.9% | MIDI 5500, knobs 1921, presets 9 | memory 7.2 MB | driver xruns -1
+min  3 | worst block 1.991 of 10.0 ms | over budget 0 | bad samples 0 | peak 1.000 | max voices 32 | CPU 11.1% | MIDI 8305, knobs 2881, presets 14 | memory 7.1 MB | driver xruns -1
+min  4 | worst block 2.083 of 10.0 ms | over budget 0 | bad samples 0 | peak 1.000 | max voices 32 | CPU 12.9% | MIDI 10917, knobs 3841, presets 19 | memory 7.1 MB | driver xruns -1
+min  5 | worst block 1.935 of 10.0 ms | over budget 0 | bad samples 0 | peak 1.000 | max voices 32 | CPU 6.7% | MIDI 13585, knobs 4801, presets 24 | memory 7.2 MB | driver xruns -1
+min  6 | worst block 1.932 of 10.0 ms | over budget 0 | bad samples 0 | peak 1.000 | max voices 32 | CPU 11.9% | MIDI 16123, knobs 5761, presets 28 | memory 7.2 MB | driver xruns -1
+min  7 | worst block 1.995 of 10.0 ms | over budget 0 | bad samples 0 | peak 1.000 | max voices 32 | CPU 9.1% | MIDI 18864, knobs 6721, presets 33 | memory 7.1 MB | driver xruns -1
+min  8 | worst block 1.957 of 10.0 ms | over budget 0 | bad samples 0 | peak 1.000 | max voices 32 | CPU 11.8% | MIDI 21652, knobs 7681, presets 38 | memory 7.1 MB | driver xruns -1
+min  9 | worst block 2.208 of 10.0 ms | over budget 0 | bad samples 0 | peak 1.000 | max voices 32 | CPU 5.7% | MIDI 24194, knobs 8641, presets 43 | memory 7.1 MB | driver xruns -1
+min 10 | worst block 2.169 of 10.0 ms | over budget 0 | bad samples 0 | peak 1.000 | max voices 32 | CPU 6.8% | MIDI 26749, knobs 9601, presets 48 | memory 7.3 MB | driver xruns -1
+min 11 | worst block 1.954 of 10.0 ms | over budget 0 | bad samples 0 | peak 1.000 | max voices 32 | CPU 2.4% | MIDI 29458, knobs 10561, presets 52 | memory 7.3 MB | driver xruns -1
+min 12 | worst block 2.125 of 10.0 ms | over budget 0 | bad samples 0 | peak 1.000 | max voices 32 | CPU 9.1% | MIDI 32181, knobs 11521, presets 57 | memory 7.2 MB | driver xruns -1
+min 13 | worst block 1.876 of 10.0 ms | over budget 0 | bad samples 0 | peak 1.000 | max voices 32 | CPU 9.3% | MIDI 34694, knobs 12481, presets 62 | memory 7.3 MB | driver xruns -1
+min 14 | worst block 2.464 of 10.0 ms | over budget 0 | bad samples 0 | peak 1.000 | max voices 32 | CPU 10.4% | MIDI 37182, knobs 13441, presets 67 | memory 7.2 MB | driver xruns -1
+min 15 | worst block 2.290 of 10.0 ms | over budget 0 | bad samples 0 | peak 1.000 | max voices 32 | CPU 5.0% | MIDI 39736, knobs 14401, presets 72 | memory 7.2 MB | driver xruns -1
+min 16 | worst block 1.843 of 10.0 ms | over budget 0 | bad samples 0 | peak 1.000 | max voices 32 | CPU 11.1% | MIDI 42274, knobs 15361, presets 76 | memory 7.2 MB | driver xruns -1
+min 17 | worst block 2.170 of 10.0 ms | over budget 0 | bad samples 0 | peak 1.000 | max voices 32 | CPU 8.8% | MIDI 45082, knobs 16321, presets 81 | memory 7.2 MB | driver xruns -1
+min 18 | worst block 2.165 of 10.0 ms | over budget 0 | bad samples 0 | peak 1.000 | max voices 32 | CPU 6.8% | MIDI 47678, knobs 17281, presets 86 | memory 7.2 MB | driver xruns -1
+min 19 | worst block 2.449 of 10.0 ms | over budget 0 | bad samples 0 | peak 1.000 | max voices 32 | CPU 6.8% | MIDI 50275, knobs 18241, presets 91 | memory 7.2 MB | driver xruns -1
+min 20 | worst block 2.127 of 10.0 ms | over budget 0 | bad samples 0 | peak 1.000 | max voices 32 | CPU 11.5% | MIDI 52567, knobs 19201, presets 96 | memory 7.2 MB | driver xruns -1
+min 21 | worst block 2.131 of 10.0 ms | over budget 0 | bad samples 0 | peak 1.000 | max voices 32 | CPU 11.8% | MIDI 55142, knobs 20161, presets 100 | memory 7.2 MB | driver xruns -1
+min 22 | worst block 2.110 of 10.0 ms | over budget 0 | bad samples 0 | peak 1.000 | max voices 32 | CPU 10.2% | MIDI 57663, knobs 21121, presets 105 | memory 7.2 MB | driver xruns -1
+min 23 | worst block 2.238 of 10.0 ms | over budget 0 | bad samples 0 | peak 1.000 | max voices 32 | CPU 10.1% | MIDI 60351, knobs 22081, presets 110 | memory 7.2 MB | driver xruns -1
+min 24 | worst block 1.929 of 10.0 ms | over budget 0 | bad samples 0 | peak 1.000 | max voices 32 | CPU 11.0% | MIDI 63024, knobs 23041, presets 115 | memory 7.2 MB | driver xruns -1
+min 25 | worst block 2.183 of 10.0 ms | over budget 0 | bad samples 0 | peak 1.000 | max voices 32 | CPU 9.6% | MIDI 65427, knobs 24001, presets 120 | memory 7.2 MB | driver xruns -1
+min 26 | worst block 2.201 of 10.0 ms | over budget 0 | bad samples 0 | peak 1.000 | max voices 32 | CPU 3.3% | MIDI 68168, knobs 24961, presets 124 | memory 7.2 MB | driver xruns -1
+min 27 | worst block 2.029 of 10.0 ms | over budget 0 | bad samples 0 | peak 1.000 | max voices 32 | CPU 9.7% | MIDI 70709, knobs 25921, presets 129 | memory 7.2 MB | driver xruns -1
+min 28 | worst block 2.120 of 10.0 ms | over budget 0 | bad samples 0 | peak 1.000 | max voices 32 | CPU 10.0% | MIDI 73154, knobs 26881, presets 134 | memory 7.4 MB | driver xruns -1
+min 29 | worst block 1.844 of 10.0 ms | over budget 0 | bad samples 0 | peak 1.000 | max voices 32 | CPU 4.5% | MIDI 75756, knobs 27841, presets 139 | memory 7.4 MB | driver xruns -1
+min 30 | worst block 1.973 of 10.0 ms | over budget 0 | bad samples 0 | peak 1.000 | max voices 32 | CPU 9.2% | MIDI 78378, knobs 28801, presets 144 | memory 7.3 MB | driver xruns -1
+STRESS PASSED: 180196 blocks, worst block 2.464 ms (budget 10.0), over budget 0, bad samples 0, peak 1.000, voices left 0, memory 7.2 -> 7.2 MB after warm-up (growth +0.01 MB), MIDI dropped 0
