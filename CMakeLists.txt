@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22)
-project(LocalMIDIStudio VERSION 0.1.0 LANGUAGES C CXX)
+project(LocalMIDIStudio VERSION 0.2.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 
 # MinGW: link the runtime statically so the exe runs without the toolchain on PATH

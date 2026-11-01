@@ -2094,7 +2094,7 @@ class App : public juce::JUCEApplication
 {
 public:
     const juce::String getApplicationName() override    { return "Local MIDI Studio"; }
-    const juce::String getApplicationVersion() override { return "0.1.0"; }
+    const juce::String getApplicationVersion() override { return "0.2.0"; }
 
     void initialise (const juce::String&) override
     {
